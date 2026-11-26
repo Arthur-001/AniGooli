@@ -111,9 +111,8 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.serialization.Serializable
 
-private const val DISCORD_URL = "https://discord.gg/HEB7duYdqe"
 private const val GITHUB_URL = "https://github.com/Arthur-001/AniGooli"
-private const val PRIVACY_POLICY = "https://imashnake.imashnake0.deno.net/animite.html"
+private const val PRIVACY_POLICY = "https://github.com/Arthur-001/AniGooli#privacy"
 private const val SYSTEM_DAY_PART = "SYSTEM"
 private const val ANIMITE = "AniGooli"
 
@@ -1269,21 +1268,6 @@ private fun AboutItem(
                 horizontalArrangement = Arrangement.spacedBy(LocalPaddings.current.medium),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { uriHandler.openUri(DISCORD_URL) }
-                        .background(Color(0xFF5865f2))
-                        .size(28.dp)
-                ) {
-                    Image(
-                        imageVector = ImageVector.vectorResource(R.drawable.discord),
-                        contentDescription = stringResource(R.string.discord),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier

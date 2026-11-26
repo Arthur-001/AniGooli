@@ -242,6 +242,7 @@ fun MainScreen(
     }
 
     var zoomableMediaImage by rememberSaveable { mutableStateOf<String?>(null) }
+    var librarySelectedTab by rememberSaveable { mutableStateOf(0) }
 
     // TODO: Refactor to use Scaffold once AnimatedVisibility issues are fixed;
     //  see https://issuetracker.google.com/issues/258270139.
@@ -337,6 +338,7 @@ fun MainScreen(
                             },
                             onNavigateToGenres = { navController.navigate(GenreManagerRoute) },
                             onNavigateToConflicts = { navController.navigate(ConflictResolutionRoute) },
+                            onSelectedTabChanged = { librarySelectedTab = it },
                         )
                     }
                     composable<GenreManagerRoute> {
@@ -416,6 +418,7 @@ fun MainScreen(
                     && currentBackStackEntry?.destination?.hasRoute<ExploreRoute>() == false
                     && currentBackStackEntry?.destination?.hasRoute<GenreManagerRoute>() == false
                     && currentBackStackEntry?.destination?.hasRoute<ConflictResolutionRoute>() == false
+                    && !(currentBackStackEntry?.destination?.hasRoute<LibraryRoute>() == true && librarySelectedTab == 0)
                     && zoomableMediaImage == null,
             modifier = Modifier
                 .align(Alignment.BottomEnd)

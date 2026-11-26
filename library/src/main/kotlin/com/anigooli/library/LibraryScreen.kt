@@ -65,6 +65,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -105,10 +106,12 @@ fun LibraryScreen(
     onNavigateToGenres: () -> Unit,
     onNavigateToConflicts: () -> Unit,
     modifier: Modifier = Modifier,
+    onSelectedTabChanged: (Int) -> Unit = {},
     contentWindowInsets: WindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(selectedTab) { onSelectedTabChanged(selectedTab) }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val restoreSummary by viewModel.lastRestoreSummary.collectAsStateWithLifecycle()
     val context = LocalContext.current

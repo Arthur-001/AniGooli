@@ -1,6 +1,6 @@
 # AniGooli [![Build APKs](https://github.com/Arthur-001/AniGooli/actions/workflows/build-apk.yaml/badge.svg)](https://github.com/Arthur-001/AniGooli/actions/workflows/build-apk.yaml)
 
-**AniGooli** is a native, lightweight Android anime client combining **[Animite](https://github.com/imashnake0/Animite)** (Material 3 AniList/MAL client) with **[ani-cli](https://github.com/pystardust/ani-cli)** streaming and offline downloads.
+**AniGooli** is a native, lightweight Android anime client created by **[Arthur-001](https://github.com/Arthur-001)**, combining Material 3 AniList/MAL tracking with **[ani-cli](https://github.com/pystardust/ani-cli)** streaming and offline downloads.
 
 ## Features
 - **Self-Updating Streaming Engine**: Executes a remote `ani-cli` extractor script inside Android's sandboxed `JavaScriptEngine` and tracks upstream `pystardust/ani-cli` daily via GitHub Actions — updating streaming sources without rebuilding the APK.
@@ -15,6 +15,12 @@
 1. Open the **[Actions](https://github.com/Arthur-001/AniGooli/actions/workflows/build-apk.yaml)** tab and select the latest green run, or download from **[Releases](https://github.com/Arthur-001/AniGooli/releases)**.
 2. Download `anigooli-debug-apk` or `anigooli-release-apk` and install on Android 10+ (`minSdk 29`).
 
+## Contributors
+1. **[Arthur-001](https://github.com/Arthur-001)** — Creator & Maintainer of AniGooli
+
+## Privacy
+AniGooli stores your offline anime list, custom genres, watch history, preferences, and downloaded episodes locally on your device. AniList account sign-in and metadata queries communicate directly with AniList; streaming resolution and script sync communicate with configured streaming hosts and `Arthur-001/AniGooli`.
+
 ## Credits & License
-- Built atop **[imashnake0/Animite](https://github.com/imashnake0/Animite)** (Apache License 2.0 — see [LICENSE.txt](LICENSE.txt)).
+- Built atop open-source Android anime client foundations (Apache License 2.0 — see [LICENSE.txt](LICENSE.txt)).
 - Streaming scraping logic adapted from **[pystardust/ani-cli](https://github.com/pystardust/ani-cli)** (GPL-3.0 upstream reference).
