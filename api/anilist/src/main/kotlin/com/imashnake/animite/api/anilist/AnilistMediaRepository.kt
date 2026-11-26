@@ -186,7 +186,14 @@ class AnilistMediaRepository(
                 .toImmutableList()
             Page(
                 list = items,
-                info = data.page?.pageInfo?.let { Info(it, filterStrategy.perPage) },
+                info = data.page?.pageInfo?.let {
+                    Info(
+                        currentPage = it.currentPage,
+                        lastPage = it.lastPage,
+                        hasNextPage = it.hasNextPage,
+                        perPage = filterStrategy.perPage,
+                    )
+                },
             )
         }
     }

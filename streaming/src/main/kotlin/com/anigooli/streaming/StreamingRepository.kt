@@ -228,7 +228,7 @@ class StreamingRepository @Inject constructor(
                 queries.add(normWords.first())
             }
         }
-        return queries.take(4)
+        return queries.take(6)
     }
 
     private fun normalizeMatchTitle(raw: String): String = raw
