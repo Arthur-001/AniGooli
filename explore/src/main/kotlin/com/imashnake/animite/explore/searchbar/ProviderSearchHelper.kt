@@ -143,6 +143,10 @@ class ProviderSearchHelper @Inject constructor(
         val merged = ArrayList<Media.Medium>(anilistResults.size + providerItems.size + jikanItems.size)
         merged.addAll(anilistResults)
 
+        val queryTokens = normalizeTitle(query)
+            .split(" ")
+            .filter { it.isNotEmpty() }
+
         for (provider in providerItems) {
             val anilistId = provider.anilistId?.takeIf { it > 0 }
             if (anilistId != null && anilistId in seenIds) continue
@@ -153,6 +157,7 @@ class ProviderSearchHelper @Inject constructor(
                 provider.title,
             ).map(::normalizeTitle).filter { it.isNotEmpty() }
             if (candidateTitles.any { it in seenNormalizedTitles }) continue
+            if (queryTokens.isNotEmpty() && !matchesQueryTokens(candidateTitles, queryTokens)) continue
 
             val jikanMatch = provider.malId?.let { jikanByMalId[it] }
                 ?: findBestJikanMatch(provider, jikanItems)
@@ -259,6 +264,12 @@ class ProviderSearchHelper @Inject constructor(
 
     private fun normalizeTitle(raw: String): String =
         raw.trim().lowercase().replace(Regex("""\s+"""), " ")
+
+    private fun matchesQueryTokens(candidateTitles: List<String>, queryTokens: List<String>): Boolean {
+        return candidateTitles.any { title ->
+            queryTokens.all { token -> title.contains(token) }
+        }
+    }
 
     private fun nextSyntheticId(seed: Int, seenIds: Set<Int>): Int {
         var candidate = -(seed.absoluteValue.coerceAtLeast(1))

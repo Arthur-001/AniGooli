@@ -91,13 +91,10 @@ class StreamingRepository @Inject constructor(
             }
             val titleMatches = allResults.filter { item ->
                 cleanedTitles.any { title ->
-                    item.englishTitle.equals(title, ignoreCase = true) ||
-                        item.romajiTitle.equals(title, ignoreCase = true) ||
-                        item.title.equals(title, ignoreCase = true) ||
-                        isUncensoredVariantOf(item, title)
+                    isExactOrVariantMatch(item, title)
                 }
             }
-            val candidatePool = (anilistMatches + titleMatches + allResults.take(3)).distinctBy { it.providerId }
+            val candidatePool = (anilistMatches + titleMatches).distinctBy { it.providerId }
 
             val uncensored = candidatePool.firstOrNull { isExplicitlyUncensored(it) }
             val censored = candidatePool.firstOrNull { !isExplicitlyUncensored(it) }
@@ -137,13 +134,23 @@ class StreamingRepository @Inject constructor(
             combined.contains("at-x")
     }
 
-    private fun isUncensoredVariantOf(item: ProviderAnime, baseTitle: String): Boolean {
-        if (!isExplicitlyUncensored(item)) return false
-        val normalizedBase = baseTitle.lowercase().trim()
-        return listOfNotNull(item.title, item.englishTitle, item.romajiTitle).any { t ->
-            t.lowercase().contains(normalizedBase)
+    private fun isExactOrVariantMatch(item: ProviderAnime, baseTitle: String): Boolean {
+        val normalizedBase = normalizeMatchTitle(baseTitle)
+        if (normalizedBase.isEmpty()) return false
+        return listOfNotNull(item.title, item.englishTitle, item.romajiTitle).any { raw ->
+            val norm = normalizeMatchTitle(raw)
+            norm == normalizedBase ||
+                norm == "$normalizedBase uncensored" ||
+                norm == "$normalizedBase censored" ||
+                norm == "$normalizedBase tv"
         }
     }
+
+    private fun normalizeMatchTitle(raw: String): String = raw
+        .lowercase()
+        .replace(Regex("""[()\[\]{}:;\-.,!?'"/]+"""), " ")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
 
     /** Fetches available episode number strings (e.g. ["1", "2", ...]) for [providerId]. */
     suspend fun fetchEpisodes(providerId: String): Result<List<String>> =

@@ -28,6 +28,19 @@ class ExtractorScriptParserTest {
     }
 
     @Test
+    fun `native miruro parser extracts cover url episode count season year and format`() {
+        val searchHtml = """
+            <script>items:[{id:"frieren-1",external_ids:{mal:["52991"],anilist:["154587"]},title:{english:"Frieren",romaji:"Sousou no Frieren"},coverImage:"https://example.com/frieren.jpg",episodes:28,seasonYear:2023,format:"TV"}],entityItems:[]</script>
+        """.trimIndent()
+        val searchResults = NativeMiruroParser.parseSearchResponse(searchHtml)
+        assertEquals(1, searchResults.size)
+        assertEquals("https://example.com/frieren.jpg", searchResults[0].coverUrl)
+        assertEquals(28, searchResults[0].episodeCount)
+        assertEquals(2023, searchResults[0].seasonYear)
+        assertEquals("TV", searchResults[0].format)
+    }
+
+    @Test
     fun `native miruro parser extracts search episodes sub dub and m3u8`() {
         val searchHtml = """
             <script>items:[{id:"frieren-1",external_ids:{mal:["52991"],anilist:["154587"]},title:{english:"Frieren",romaji:"Sousou no Frieren"},format:"TV"}],entityItems:[]</script>
