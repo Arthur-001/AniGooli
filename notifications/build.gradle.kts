@@ -25,6 +25,7 @@ dependencies {
     implementation(projects.api.preferences)
     implementation(projects.library)
 
+    implementation(libs.apollo.cache.memory)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.work.runtimeKtx)
     implementation(libs.androidx.hilt.work)

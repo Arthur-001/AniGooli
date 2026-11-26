@@ -96,7 +96,7 @@ class ReleaseCheckWorker @AssistedInject constructor(
                             userPreferred = node.title?.userPreferred,
                             language = language,
                         ) ?: return@mapNotNull null
-                        val type = node.type?.name?.let { Media.Small.Type.valueOf(it) }
+                        val type = Media.Small.Type.entries.firstOrNull { it.name == node.type?.name }
                             ?: Media.Small.Type.UNKNOWN
                         TrackedRelationItem(
                             id = node.id,
