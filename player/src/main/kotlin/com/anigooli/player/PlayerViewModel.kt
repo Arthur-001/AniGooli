@@ -16,12 +16,18 @@ import com.anigooli.streaming.StreamSource
 import com.anigooli.streaming.StreamingRepository
 import com.imashnake.animite.api.preferences.PreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.File
 import javax.inject.Inject
 
 private const val DEFAULT_SPEED = 1.0f
@@ -79,11 +85,13 @@ data class PlayerUiState(
     val statusBanner: String? = null,
     /** Live single-slot pre-buffer state. */
     val preBufferState: PreBufferState = PreBufferState(),
+    /** Parsed timed subtitle cues for the active video. */
+    val subtitleCues: List<SubtitleCue> = emptyList(),
 )
 
 /** ViewModel orchestrating per-anime audio/sub memory, single-slot pre-buffering, quality switching, and downloads. */
 @HiltViewModel
-@Suppress("TooManyFunctions")
+@Suppress("TooManyFunctions", "LongParameterList")
 class PlayerViewModel @Inject constructor(
     private val launchStore: PlayerLaunchStore,
     private val streamingRepository: StreamingRepository,
@@ -92,7 +100,10 @@ class PlayerViewModel @Inject constructor(
     val preBufferManager: PreBufferManager,
     private val externalPlayerLauncher: ExternalPlayerLauncher,
     private val preferencesRepository: PreferencesRepository,
+    private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
+
+    private var subtitleLoadJob: Job? = null
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     /** Observable UI state for [PlayerScreen]. */
@@ -150,6 +161,7 @@ class PlayerViewModel @Inject constructor(
         if (!payload.isLocalFile && activeSource != null && payload.anilistId != null) {
             startPreBufferFor(payload.anilistId, payload.episode, activeSource, resolvedAudio)
         }
+        loadSubtitlesForCurrentSource()
         if (payload.anilistId != null) {
             libraryRepository.recordWatchHistory(
                 anilistId = payload.anilistId,
@@ -170,6 +182,7 @@ class PlayerViewModel @Inject constructor(
                 statusBanner = "Quality: ${source.qualityLabel}",
             )
         }
+        loadSubtitlesForCurrentSource()
         val anilistId = current.anilistId ?: return
         viewModelScope.launch {
             libraryRepository.savePlaybackPrefs(
@@ -361,6 +374,7 @@ class PlayerViewModel @Inject constructor(
                     } else null,
                 )
             }
+            loadSubtitlesForCurrentSource()
             startPreBufferFor(anilistId, episode, bundle.selectedSource, bundle.actualAudioTrack)
         }.onFailure { err ->
             _uiState.update {
@@ -378,4 +392,50 @@ class PlayerViewModel @Inject constructor(
         val slotKey = PreBufferPolicy.slotKey(anilistId, episode, source.qualityLabel, audioTrack.name)
         preBufferManager.startPreBuffer(slotKey, source)
     }
+
+    private fun loadSubtitlesForCurrentSource() {
+        subtitleLoadJob?.cancel()
+        val current = _uiState.value
+        subtitleLoadJob = viewModelScope.launch {
+            val cues = withContext(Dispatchers.IO) {
+                if (current.isLocalFile) {
+                    val path = current.localSubtitlePath?.takeIf { it.isNotBlank() } ?: return@withContext emptyList()
+                    runCatching { SubtitleParser.parse(File(path).readText(Charsets.UTF_8)) }
+                        .getOrDefault(emptyList())
+                } else {
+                    val source = current.selectedSource ?: return@withContext emptyList()
+                    val subUrl = source.subtitleUrl?.takeIf { it.isNotBlank() } ?: return@withContext emptyList()
+                    val raw = fetchSubtitleText(
+                        url = subUrl,
+                        userAgent = current.userAgent,
+                        referer = source.referer,
+                        origin = source.origin,
+                    ) ?: fetchSubtitleText(
+                        url = subUrl,
+                        userAgent = current.userAgent,
+                        referer = "",
+                        origin = "",
+                    )
+                    if (raw.isNullOrBlank()) emptyList() else SubtitleParser.parse(raw)
+                }
+            }
+            _uiState.update { it.copy(subtitleCues = cues) }
+        }
+    }
+
+    private fun fetchSubtitleText(
+        url: String,
+        userAgent: String,
+        referer: String,
+        origin: String,
+    ): String? = runCatching {
+        val builder = Request.Builder()
+            .url(url)
+            .header("User-Agent", userAgent)
+        if (referer.isNotBlank()) builder.header("Referer", referer)
+        if (origin.isNotBlank()) builder.header("Origin", origin)
+        okHttpClient.newCall(builder.build()).execute().use { resp ->
+            if (resp.isSuccessful) resp.body?.string() else null
+        }
+    }.getOrNull()
 }

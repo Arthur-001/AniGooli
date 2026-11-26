@@ -77,6 +77,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -110,7 +111,8 @@ import java.util.Locale
 private const val SEEK_DRAG_WINDOW_MS = 90_000f
 private const val DOUBLE_TAP_SEEK_MS = 10_000L
 private const val CONTROLS_AUTO_HIDE_MS = 3_500L
-private const val POSITION_POLL_MS = 500L
+private const val POSITION_POLL_MS = 100L
+private const val SAVE_PROGRESS_EVERY_TICKS = 50
 private const val PIP_RATIO_NUM = 16
 private const val PIP_RATIO_DEN = 9
 private const val MIN_RAM_MS = 15_000
@@ -286,19 +288,8 @@ private fun PlayerScreen(
         if (state.isLocalFile) {
             val path = state.localVideoPath ?: return@LaunchedEffect
             val dataFactory = DefaultDataSource.Factory(context)
-            val builder = MediaItem.Builder().setUri(Uri.fromFile(File(path)))
-            state.localSubtitlePath?.takeIf { it.isNotBlank() }?.let { subPath ->
-                builder.setSubtitleConfigurations(
-                    listOf(
-                        MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(File(subPath)))
-                            .setMimeType(detectSubtitleMimeType(subPath))
-                            .setLanguage("en")
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                            .build()
-                    )
-                )
-            }
-            val finalSource = DefaultMediaSourceFactory(dataFactory).createMediaSource(builder.build())
+            val finalSource = ProgressiveMediaSource.Factory(dataFactory)
+                .createMediaSource(MediaItem.fromUri(Uri.fromFile(File(path))))
             exoPlayer.setMediaSource(finalSource)
             exoPlayer.prepare()
             if (state.targetSeekPositionMs > 0L) exoPlayer.seekTo(state.targetSeekPositionMs)
@@ -313,17 +304,6 @@ private fun PlayerScreen(
             val builder = MediaItem.Builder().setUri(source.url.toUri())
             if (source.isHls) {
                 builder.setMimeType(MimeTypes.APPLICATION_M3U8)
-            }
-            source.subtitleUrl?.takeIf { it.isNotBlank() }?.let { subUrl ->
-                builder.setSubtitleConfigurations(
-                    listOf(
-                        MediaItem.SubtitleConfiguration.Builder(subUrl.toUri())
-                            .setMimeType(detectSubtitleMimeType(subUrl))
-                            .setLanguage("en")
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                            .build()
-                    )
-                )
             }
             val videoSource = DefaultMediaSourceFactory(dataFactory).createMediaSource(builder.build())
             val finalSource = if (!source.audioUrl.isNullOrBlank()) {
@@ -367,7 +347,7 @@ private fun PlayerScreen(
             durationMs = exoPlayer.duration.coerceAtLeast(0L)
             bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
             tick++
-            if (tick % 10 == 0 && exoPlayer.isPlaying) {
+            if (tick % SAVE_PROGRESS_EVERY_TICKS == 0 && exoPlayer.isPlaying) {
                 viewModel.savePlaybackProgress(currentPosMs)
             }
             delay(POSITION_POLL_MS)
@@ -632,6 +612,38 @@ private fun PlayerScreen(
                     color = MaterialTheme.colorScheme.onErrorContainer,
                     modifier = Modifier.padding(16.dp),
                 )
+            }
+        }
+
+        // Compose subtitle overlay (renders parsed VTT/SRT/ASS cues reliably)
+        if (state.subtitlesEnabled && state.subtitleCues.isNotEmpty() && !isInPipMode) {
+            val activeLines = remember(currentPosMs, state.subtitleCues) {
+                SubtitleParser.activeCueTexts(state.subtitleCues, currentPosMs)
+            }
+            if (activeLines.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(
+                            start = 28.dp,
+                            end = 28.dp,
+                            bottom = if (showControls) 88.dp else 24.dp,
+                        ),
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Black.copy(alpha = 0.65f),
+                    ) {
+                        Text(
+                            text = activeLines.joinToString("\n"),
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                }
             }
         }
 
