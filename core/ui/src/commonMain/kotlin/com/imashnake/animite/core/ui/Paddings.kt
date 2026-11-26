@@ -10,10 +10,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import animite.core.ui.generated.resources.Res
-import animite.core.ui.generated.resources.comfy
-import animite.core.ui.generated.resources.compact
-import animite.core.ui.generated.resources.cozy
+import anigooli.core.ui.generated.resources.Res
+import anigooli.core.ui.generated.resources.comfy
+import anigooli.core.ui.generated.resources.compact
+import anigooli.core.ui.generated.resources.cozy
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 

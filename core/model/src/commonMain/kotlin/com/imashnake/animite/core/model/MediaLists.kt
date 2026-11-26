@@ -1,11 +1,11 @@
 package com.imashnake.animite.core.model
 
-import animite.core.model.generated.resources.Res
-import animite.core.model.generated.resources.all_time_popular
-import animite.core.model.generated.resources.newly_added
-import animite.core.model.generated.resources.popular_this_season
-import animite.core.model.generated.resources.trending_now
-import animite.core.model.generated.resources.upcoming_next_season
+import anigooli.core.model.generated.resources.Res
+import anigooli.core.model.generated.resources.all_time_popular
+import anigooli.core.model.generated.resources.newly_added
+import anigooli.core.model.generated.resources.popular_this_season
+import anigooli.core.model.generated.resources.trending_now
+import anigooli.core.model.generated.resources.upcoming_next_season
 import org.jetbrains.compose.resources.StringResource
 
 public enum class AnimeList(public val res: StringResource) {

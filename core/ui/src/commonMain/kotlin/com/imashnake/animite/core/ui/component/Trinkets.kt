@@ -21,8 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
-import animite.core.ui.generated.resources.Res
-import animite.core.ui.generated.resources.drop_down
+import anigooli.core.ui.generated.resources.Res
+import anigooli.core.ui.generated.resources.drop_down
 import com.imashnake.animite.core.ui.LocalPaddings
 import org.jetbrains.compose.resources.painterResource
 

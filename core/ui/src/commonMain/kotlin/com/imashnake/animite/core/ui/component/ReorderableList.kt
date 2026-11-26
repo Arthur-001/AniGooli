@@ -22,8 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
-import animite.core.ui.generated.resources.Res
-import animite.core.ui.generated.resources.drag_handle
+import anigooli.core.ui.generated.resources.Res
+import anigooli.core.ui.generated.resources.drag_handle
 import com.imashnake.animite.core.ui.LocalPaddings
 import kotlinx.collections.immutable.ImmutableList
 import org.jetbrains.compose.resources.StringResource
