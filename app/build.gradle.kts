@@ -12,8 +12,8 @@ plugins {
 android {
     defaultConfig {
         applicationId = "com.anigooli.app"
-        versionCode = 5
-        versionName = "1.1.2"
+        versionCode = 6
+        versionName = "1.1.3"
     }
 
     val releaseStorePath = project.findProperty("storeFilePath")?.toString()?.takeIf { it.isNotBlank() }

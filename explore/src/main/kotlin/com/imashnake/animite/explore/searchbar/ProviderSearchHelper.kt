@@ -16,7 +16,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.absoluteValue
 
-private const val FALLBACK_SEARCH_TIMEOUT_MS = 5_000L
+private const val FALLBACK_SEARCH_TIMEOUT_MS = 4_000L
+private const val MAX_CACHE_ENTRIES = 50
+private const val SCORE_EXACT_MATCH = 10_000
+private const val SCORE_VARIANT_EXACT = 9_000
+private const val SCORE_PREFIX_MATCH = 6_000
+private const val SCORE_WORD_MATCH = 4_000
+private const val SCORE_SUBSTRING_MATCH = 2_000
 
 /** Resolved metadata for a search result sourced from `ani-cli` or Jikan fallback. */
 data class SearchFallbackMeta(
@@ -29,8 +35,8 @@ data class SearchFallbackMeta(
 )
 
 /**
- * Merges `ani-cli` (`StreamingRepository`) search results and Jikan (`sfw=false`) metadata
- * into AniList search results so adult, ecchi, and partial-match anime appear with covers and details.
+ * Merges AniList, `ani-cli` (`StreamingRepository`), and Jikan (`sfw=false`) search results,
+ * ranks exact and prefix matches first, and caches results per normalized query.
  */
 @Singleton
 class ProviderSearchHelper @Inject constructor(
@@ -38,13 +44,38 @@ class ProviderSearchHelper @Inject constructor(
     private val jikanMetadataClient: JikanMetadataClient,
 ) {
     private val fallbackLookup = ConcurrentHashMap<Int, SearchFallbackMeta>()
+    private val searchCache = object : LinkedHashMap<String, ImmutableList<Media.Medium>>(
+        MAX_CACHE_ENTRIES,
+        0.75f,
+        true,
+    ) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, ImmutableList<Media.Medium>>?,
+        ): Boolean = size > MAX_CACHE_ENTRIES
+    }
+
+    /** Returns cached search results for [query] if present, or null on cache miss. */
+    fun getCachedResults(query: String): ImmutableList<Media.Medium>? {
+        val key = normalizeKey(query)
+        if (key.isEmpty()) return null
+        return synchronized(searchCache) { searchCache[key] }
+    }
+
+    /** Stores [results] in the in-memory LRU search cache for [query]. */
+    fun putCachedResults(query: String, results: ImmutableList<Media.Medium>) {
+        val key = normalizeKey(query)
+        if (key.isEmpty()) return
+        synchronized(searchCache) {
+            searchCache[key] = results
+        }
+    }
 
     /** Returns cached [SearchFallbackMeta] for a synthetic or matched media ID if available. */
     fun getFallbackMeta(mediaId: Int): SearchFallbackMeta? = fallbackLookup[mediaId]
 
     /**
-     * Fetches `ani-cli` and Jikan (`sfw=false`) results for [query] in parallel with bounded timeouts
-     * and appends any non-duplicate titles (including Ecchi / Erotica / Hentai) after [anilistResults].
+     * Fetches `ani-cli` and Jikan (`sfw=false`) results for [query] in parallel with bounded timeouts,
+     * merges them with [anilistResults], and sorts exact/closest matches to the top.
      */
     suspend fun mergeProviderResults(
         query: String,
@@ -66,14 +97,46 @@ class ProviderSearchHelper @Inject constructor(
 
         val providerItems = providerDeferred.await()
         val jikanItems = jikanDeferred.await()
-        if (providerItems.isEmpty() && jikanItems.isEmpty()) {
-            return@coroutineScope anilistResults.toImmutableList()
-        }
 
+        val ranked = buildMergedAndRanked(
+            query = trimmed,
+            anilistResults = anilistResults,
+            providerItems = providerItems,
+            jikanItems = jikanItems,
+        )
+        if (ranked.isNotEmpty()) {
+            putCachedResults(trimmed, ranked)
+        }
+        ranked
+    }
+
+    /** Ranks [results] so exact title matches appear first and loose matches appear at the bottom. */
+    fun rankByRelevance(
+        query: String,
+        results: List<Media.Medium>,
+    ): ImmutableList<Media.Medium> {
+        val normalizedQuery = normalizeTitle(query)
+        if (normalizedQuery.isEmpty() || results.size <= 1) return results.toImmutableList()
+        return results.withIndex()
+            .sortedWith(
+                compareByDescending<IndexedValue<Media.Medium>> { (idx, item) ->
+                    computeRelevanceScore(item.title, normalizedQuery)
+                }.thenBy { it.index },
+            )
+            .map { it.value }
+            .toImmutableList()
+    }
+
+    private fun buildMergedAndRanked(
+        query: String,
+        anilistResults: List<Media.Medium>,
+        providerItems: List<ProviderAnime>,
+        jikanItems: List<JikanAnimeInfo>,
+    ): ImmutableList<Media.Medium> {
         val jikanByMalId = jikanItems.associateBy { it.malId }
         val seenIds = anilistResults.map { it.id }.toHashSet()
         val seenNormalizedTitles = anilistResults
-            .mapNotNull { it.title?.lowercase()?.trim() }
+            .mapNotNull { it.title?.let(::normalizeTitle)?.takeIf { t -> t.isNotEmpty() } }
             .toHashSet()
         val seenMalIds = HashSet<Int>()
 
@@ -88,7 +151,7 @@ class ProviderSearchHelper @Inject constructor(
                 provider.englishTitle,
                 provider.romajiTitle,
                 provider.title,
-            ).map { it.lowercase().trim() }
+            ).map(::normalizeTitle).filter { it.isNotEmpty() }
             if (candidateTitles.any { it in seenNormalizedTitles }) continue
 
             val jikanMatch = provider.malId?.let { jikanByMalId[it] }
@@ -131,14 +194,13 @@ class ProviderSearchHelper @Inject constructor(
             )
         }
 
-        // Also include Jikan matches missed by AniList (e.g. partial token queries like "stein" -> "Steins;Gate")
         for (jikan in jikanItems) {
             if (jikan.malId in seenMalIds) continue
             val candidateTitles = listOfNotNull(
                 jikan.titleEnglish,
                 jikan.title,
                 jikan.titleJapanese,
-            ).map { it.lowercase().trim() }
+            ).map(::normalizeTitle).filter { it.isNotEmpty() }
             if (candidateTitles.any { it in seenNormalizedTitles }) continue
 
             val resolvedId = nextSyntheticId(jikan.malId, seenIds)
@@ -166,8 +228,36 @@ class ProviderSearchHelper @Inject constructor(
             )
         }
 
-        merged.toImmutableList()
+        return rankByRelevance(query, merged)
     }
+
+    private fun computeRelevanceScore(rawTitle: String?, normalizedQuery: String): Int {
+        val title = normalizeTitle(rawTitle.orEmpty())
+        if (title.isEmpty()) return 0
+        val strippedVariant = title
+            .replace("(uncensored)", "")
+            .replace("(censored)", "")
+            .trim()
+        return when {
+            title == normalizedQuery -> SCORE_EXACT_MATCH
+            strippedVariant == normalizedQuery -> SCORE_VARIANT_EXACT
+            title.startsWith(normalizedQuery) -> {
+                SCORE_PREFIX_MATCH - (title.length - normalizedQuery.length).coerceAtMost(500)
+            }
+            Regex("""\b${Regex.escape(normalizedQuery)}\b""").containsMatchIn(title) -> {
+                SCORE_WORD_MATCH - (title.length - normalizedQuery.length).coerceAtMost(500)
+            }
+            title.contains(normalizedQuery) -> {
+                SCORE_SUBSTRING_MATCH - (title.length - normalizedQuery.length).coerceAtMost(500)
+            }
+            else -> 0
+        }
+    }
+
+    private fun normalizeKey(query: String): String = query.trim().lowercase()
+
+    private fun normalizeTitle(raw: String): String =
+        raw.trim().lowercase().replace(Regex("""\s+"""), " ")
 
     private fun nextSyntheticId(seed: Int, seenIds: Set<Int>): Int {
         var candidate = -(seed.absoluteValue.coerceAtLeast(1))
@@ -185,13 +275,13 @@ class ProviderSearchHelper @Inject constructor(
             provider.englishTitle,
             provider.romajiTitle,
             provider.title,
-        ).map { it.lowercase().trim() }
+        ).map(::normalizeTitle).filter { it.isNotEmpty() }
         return jikanItems.firstOrNull { jikan ->
             val jikanTitles = listOfNotNull(
                 jikan.titleEnglish,
                 jikan.title,
                 jikan.titleJapanese,
-            ).map { it.lowercase().trim() }
+            ).map(::normalizeTitle).filter { it.isNotEmpty() }
             titles.any { t -> jikanTitles.any { jt -> jt == t } }
         }
     }

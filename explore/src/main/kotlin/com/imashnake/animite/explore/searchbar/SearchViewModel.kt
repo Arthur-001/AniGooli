@@ -13,21 +13,24 @@ import com.imashnake.animite.core.ui.Constants
 import com.imashnake.animite.core.ui.component.MediaCardSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
-import kotlin.time.Duration.Companion.milliseconds
+
+private const val ANILIST_SEARCH_TIMEOUT_MS = 5_000L
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
@@ -38,10 +41,15 @@ class SearchViewModel @Inject constructor(
     preferencesRepository: PreferencesRepository,
 ) : ViewModel() {
     private val mediaType = savedStateHandle.getStateFlow<MediaType?>(Constants.MEDIA_TYPE, null)
-    private val query = savedStateHandle.getStateFlow<String?>(QUERY, null)
+    private val draftQueryFlow = savedStateHandle.getStateFlow(DRAFT_QUERY, "")
+    private val submittedQueryFlow = savedStateHandle.getStateFlow<String?>(SUBMITTED_QUERY, null)
+    private val searchTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
-    /** Observable search text preserved across search bar minimize/expand actions. */
-    val queryState: StateFlow<String?> = query
+    /** Current text inside the search input field (preserved across minimize/expand). */
+    val draftQuery: StateFlow<String> = draftQueryFlow
+
+    /** Last explicitly submitted query, or null if cleared. */
+    val submittedQuery: StateFlow<String?> = submittedQueryFlow
 
     /** Effective card size for search results matching the Explore/global card size setting. */
     val cardSize: StateFlow<MediaCardSize> = combine(
@@ -60,59 +68,97 @@ class SearchViewModel @Inject constructor(
         }
     )
 
-    @OptIn(FlowPreview::class)
     val searchList = combine(
-        flow = mediaType.filterNotNull(),
-        flow2 = query,
-        flow3 = prefs,
-        transform = ::Triple
-    ).debounce(300L.milliseconds).flatMapLatest { (mediaType, query, prefs) ->
-        if (query.isNullOrBlank()) {
+        mediaType.filterNotNull(),
+        submittedQueryFlow,
+        prefs,
+        searchTrigger.onStart { emit(Unit) },
+    ) { type, submitted, userPrefs, _ ->
+        Triple(type, submitted, userPrefs)
+    }.flatMapLatest { (mediaType, query, prefs) ->
+        val trimmed = query?.trim().orEmpty()
+        if (trimmed.isEmpty()) {
             flowOf(Resource.success(persistentListOf()))
         } else {
             flow {
-                emit(Resource.loading())
-                val anilistList = runCatching {
-                    searchRepository.fetchSearch(
-                        type = mediaType,
-                        search = query,
-                        isNsfwEnabled = prefs.isNsfwEnabled,
-                        language = prefs.language,
-                        perPage = prefs.listSize,
-                    ).firstOrNull()?.getOrNull()
-                }.getOrNull().orEmpty()
+                val cached = providerSearchHelper.getCachedResults(trimmed)
+                if (cached != null) {
+                    // Instant response from cache, then refresh in background for new releases/episodes
+                    emit(Resource.success(cached))
+                } else {
+                    emit(Resource.loading())
+                }
 
-                if (anilistList.isNotEmpty()) {
-                    emit(Resource.success(anilistList.toImmutableList()))
+                val anilistList = coroutineScope {
+                    val anilistDeferred = async {
+                        withTimeoutOrNull(ANILIST_SEARCH_TIMEOUT_MS) {
+                            runCatching {
+                                searchRepository.fetchSearch(
+                                    type = mediaType,
+                                    search = trimmed,
+                                    isNsfwEnabled = prefs.isNsfwEnabled,
+                                    language = prefs.language,
+                                    perPage = prefs.listSize,
+                                ).firstOrNull()?.getOrNull()
+                            }.getOrNull()
+                        }.orEmpty()
+                    }
+                    anilistDeferred.await()
+                }
+
+                val rankedAnilist = providerSearchHelper.rankByRelevance(trimmed, anilistList)
+                if (cached == null && rankedAnilist.isNotEmpty()) {
+                    emit(Resource.success(rankedAnilist))
                 }
 
                 if (mediaType == MediaType.ANIME) {
-                    val combined = providerSearchHelper.mergeProviderResults(query, anilistList)
+                    val combined = providerSearchHelper.mergeProviderResults(trimmed, anilistList)
                     emit(Resource.success(combined))
-                } else if (anilistList.isEmpty()) {
-                    emit(Resource.success(persistentListOf()))
+                } else {
+                    providerSearchHelper.putCachedResults(trimmed, rankedAnilist)
+                    emit(Resource.success(rankedAnilist))
                 }
             }
         }
-    }
-    .stateIn(
+    }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(1000),
-        initialValue = Resource.loading()
+        initialValue = Resource.success(persistentListOf()),
     )
 
     /** Returns fallback metadata for [mediaId] when resolved via ani-cli or Jikan. */
     fun getFallbackMeta(mediaId: Int): SearchFallbackMeta? = providerSearchHelper.getFallbackMeta(mediaId)
 
+    /** Sets active media type for search queries. */
     fun setMediaType(mediaType: MediaType) {
         savedStateHandle[Constants.MEDIA_TYPE] = mediaType
     }
 
-    fun setQuery(query: String?) {
-        savedStateHandle[QUERY] = query
+    /** Updates draft input text without firing network requests. */
+    fun updateDraftQuery(text: String) {
+        savedStateHandle[DRAFT_QUERY] = text
+    }
+
+    /** Submits the current [draftQuery] (or [explicitQuery]) to execute search and refresh cache. */
+    fun submitSearch(explicitQuery: String? = null) {
+        val target = (explicitQuery ?: draftQueryFlow.value).trim()
+        if (target.isEmpty()) {
+            clearSearch()
+            return
+        }
+        savedStateHandle[DRAFT_QUERY] = target
+        savedStateHandle[SUBMITTED_QUERY] = target
+        searchTrigger.tryEmit(Unit)
+    }
+
+    /** Clears both draft and submitted search text and resets results. */
+    fun clearSearch() {
+        savedStateHandle[DRAFT_QUERY] = ""
+        savedStateHandle[SUBMITTED_QUERY] = null
     }
 
     companion object {
-        const val QUERY = "query"
+        const val DRAFT_QUERY = "draft_query"
+        const val SUBMITTED_QUERY = "submitted_query"
     }
 }

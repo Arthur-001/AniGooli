@@ -2,13 +2,14 @@ package com.imashnake.animite.explore.searchbar
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,15 +31,17 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.dp
@@ -80,16 +83,17 @@ fun SearchFrontDrop(
         viewModel.setMediaType(searchMediaType)
     }
     val searchList by viewModel.searchList.collectAsState()
-    val currentQuery by viewModel.queryState.collectAsState()
+    val draftQuery by viewModel.draftQuery.collectAsState()
+    val submittedQuery by viewModel.submittedQuery.collectAsState()
     val cardSize by viewModel.cardSize.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    var isOverlayOpen by rememberSaveable { mutableStateOf(false) }
     var isExpanded by rememberSaveable { mutableStateOf(false) }
-    val hasQuery = !currentQuery.isNullOrBlank()
-    val showOverlay = isFabVisible && (isExpanded || hasQuery)
+    val showOverlay = isFabVisible && isOverlayOpen
 
-    BackHandler(enabled = isFabVisible && !isExpanded && hasQuery) {
-        viewModel.setQuery(null)
+    BackHandler(enabled = showOverlay && !isExpanded) {
+        isOverlayOpen = false
     }
 
     val searchBarBottomPadding by animateDpAsState(
@@ -98,58 +102,64 @@ fun SearchFrontDrop(
         } else 0.dp,
         label = "translate_search_bar"
     )
-    val frontDropColor by animateColorAsState(
-        targetValue = MaterialTheme.colorScheme.background.copy(
-            alpha = if (showOverlay) 0.95f else 0f
-        ),
-        animationSpec = tween(400),
-        label = "show_front_drop"
-    )
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .drawBehind { drawRect(frontDropColor) }
-    )
-
-    if (isFabVisible && hasQuery && searchList is Resource.Loading) {
-        LinearProgressIndicator(
+    if (showOverlay) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = insetPaddingValues.calculateTopPadding()),
-        )
-    }
-
-    searchList.data?.let {
-        AnimatedVisibility(
-            visible = isFabVisible && (it.isNotEmpty() || isExpanded),
-            enter = fadeIn(tween(500)),
-            exit = fadeOut(tween(500)),
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.97f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                )
         ) {
-            MediaMediumList(
-                mediaMediumList = it,
-                onItemClick = { id ->
-                    keyboardController?.hide()
-                    isExpanded = false
-                    onItemClick(id, searchMediaType, viewModel.getFallbackMeta(id))
-                },
-                shouldShowRank = false,
-                cardSize = cardSize,
-                modifier = Modifier
-                    .imeNestedScroll()
-                    .consumeWindowInsets(
-                        PaddingValues(
-                            bottom = searchBarBottomPadding + insetPaddingValues.calculateBottomPadding()
-                        )
-                    ).imePadding(),
-                contentPadding = PaddingValues(
-                    LocalPaddings.current.large
-                ) + PaddingValues(
-                    bottom = LocalPaddings.current.large +
+            val results = searchList.data.orEmpty()
+            val isLoading = searchList is Resource.Loading
+
+            if (results.isNotEmpty()) {
+                MediaMediumList(
+                    mediaMediumList = results,
+                    onItemClick = { id ->
+                        keyboardController?.hide()
+                        isExpanded = false
+                        isOverlayOpen = false
+                        onItemClick(id, searchMediaType, viewModel.getFallbackMeta(id))
+                    },
+                    shouldShowRank = false,
+                    cardSize = cardSize,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .imeNestedScroll()
+                        .consumeWindowInsets(
+                            PaddingValues(
+                                bottom = searchBarBottomPadding + insetPaddingValues.calculateBottomPadding()
+                            )
+                        ).imePadding(),
+                    contentPadding = PaddingValues(
+                        LocalPaddings.current.large
+                    ) + PaddingValues(
+                        bottom = LocalPaddings.current.large +
                             dimensionResource(R.dimen.search_bar_height) +
                             searchBarBottomPadding
-                ) + insetPaddingValues,
-            )
+                    ) + insetPaddingValues,
+                )
+            } else if (!isLoading && !submittedQuery.isNullOrBlank()) {
+                Text(
+                    text = "No results found for \"$submittedQuery\"",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                )
+            }
+
+            if (isLoading) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = insetPaddingValues.calculateTopPadding()),
+                )
+            }
         }
     }
 
@@ -167,11 +177,26 @@ fun SearchFrontDrop(
     ) {
         SearchFab(
             isExpanded = isExpanded,
-            setExpanded = { isExpanded = it },
-            query = currentQuery.orEmpty(),
-            onQueryChange = { viewModel.setQuery(it.ifEmpty { null }) },
-            onMinimize = { isExpanded = false },
-            onClear = { viewModel.setQuery(null) },
+            onExpand = {
+                isOverlayOpen = true
+                isExpanded = true
+            },
+            query = draftQuery,
+            onQueryChange = viewModel::updateDraftQuery,
+            onSubmit = {
+                viewModel.submitSearch()
+                isExpanded = false
+                isOverlayOpen = true
+            },
+            onMinimize = {
+                isExpanded = false
+                if (submittedQuery.isNullOrBlank()) {
+                    isOverlayOpen = false
+                }
+            },
+            onClear = {
+                viewModel.clearSearch()
+            },
         )
     }
 }

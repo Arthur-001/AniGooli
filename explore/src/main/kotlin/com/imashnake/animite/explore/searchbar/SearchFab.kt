@@ -3,6 +3,7 @@ package com.imashnake.animite.explore.searchbar
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -12,6 +13,7 @@ import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -27,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -39,17 +42,19 @@ import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.dp
 import com.imashnake.animite.explore.R
 
 /**
  * A Floating Action Button-esque collapsible search bar. When collapsed, it displays a search icon.
- * Expanding it reveals a text field with minimize and clear buttons, preserving entered text across
- * minimize/expand cycles until explicitly cleared.
+ * Expanding it reveals a text field with minimize, search submit, and clear buttons, preserving
+ * entered text across minimize/expand cycles until explicitly cleared.
  *
  * @param isExpanded Whether the search FAB is currently "expanded".
- * @param setExpanded Called when [isExpanded] should be updated.
- * @param query Current preserved search query string.
- * @param onQueryChange Called when the user edits the query text.
+ * @param onExpand Called when the collapsed search icon is tapped.
+ * @param query Current preserved draft search query string.
+ * @param onQueryChange Called when the user edits the query text (without triggering search).
+ * @param onSubmit Called when the user taps Search or the keyboard Search action.
  * @param onMinimize Called when the bar should collapse without clearing [query].
  * @param onClear Called when the user explicitly clears [query] via the cross button.
  * @param modifier [Modifier].
@@ -57,9 +62,10 @@ import com.imashnake.animite.explore.R
 @Composable
 fun SearchFab(
     isExpanded: Boolean,
-    setExpanded: (expanded: Boolean) -> Unit,
+    onExpand: () -> Unit,
     query: String,
     onQueryChange: (String) -> Unit,
+    onSubmit: () -> Unit,
     onMinimize: () -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
@@ -76,10 +82,11 @@ fun SearchFab(
                     collapse = onMinimize,
                     clearText = onClear,
                     searchText = onQueryChange,
+                    submit = onSubmit,
                 )
             } else {
                 CollapsedSearchBarContent(
-                    expand = { setExpanded(true) },
+                    expand = onExpand,
                     modifier = Modifier.padding(dimensionResource(R.dimen.search_bar_icon_padding))
                 )
             }
@@ -107,6 +114,7 @@ internal fun ExpandedSearchBarContent(
     collapse: () -> Unit,
     clearText: () -> Unit,
     searchText: (String) -> Unit,
+    submit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val focusRequester = remember { FocusRequester() }
@@ -144,7 +152,7 @@ internal fun ExpandedSearchBarContent(
         keyboardActions = KeyboardActions(
             onSearch = {
                 keyboardController?.hide()
-                collapse()
+                submit()
             }
         ),
         leadingIcon = {
@@ -162,22 +170,40 @@ internal fun ExpandedSearchBarContent(
             }
         },
         trailingIcon = {
-            IconButton(
-                onClick = {
-                    if (textFieldValue.text.isEmpty()) {
-                        keyboardController?.hide()
-                        collapse()
-                    } else {
-                        textFieldValue = TextFieldValue("")
-                        clearText()
-                    }
-                },
-                modifier = Modifier.size(dimensionResource(R.dimen.search_icon_size))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(end = 6.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Close,
-                    contentDescription = "Clear search text"
-                )
+                IconButton(
+                    enabled = textFieldValue.text.isNotBlank(),
+                    onClick = {
+                        keyboardController?.hide()
+                        submit()
+                    },
+                    modifier = Modifier.size(dimensionResource(R.dimen.search_icon_size))
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = "Search"
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        if (textFieldValue.text.isEmpty()) {
+                            keyboardController?.hide()
+                            collapse()
+                        } else {
+                            textFieldValue = TextFieldValue("")
+                            clearText()
+                        }
+                    },
+                    modifier = Modifier.size(dimensionResource(R.dimen.search_icon_size))
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Clear search text"
+                    )
+                }
             }
         }
     )
@@ -209,6 +235,7 @@ fun searchTextFieldColors(
         unfocusedLeadingIconColor = contentColor,
         focusedTrailingIconColor = contentColor,
         unfocusedTrailingIconColor = contentColor,
+        disabledTrailingIconColor = contentColor.copy(alpha = 0.4f),
         unfocusedPlaceholderColor = contentColor.copy(alpha = 0.5f),
         focusedPlaceholderColor = contentColor.copy(alpha = 0.5f),
     )
