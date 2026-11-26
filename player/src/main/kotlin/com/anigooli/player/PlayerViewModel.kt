@@ -158,23 +158,35 @@ class PlayerViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            combine(
+            val typographyAndLayout = combine(
                 preferencesRepository.subtitleFontFamily,
                 preferencesRepository.subtitleFontSizeSp,
                 preferencesRepository.subtitleVerticalPosition,
                 preferencesRepository.subtitleWidthFraction,
+            ) { font, size, pos, width ->
+                SubtitleStyleConfig(
+                    fontFamilyId = font ?: SUBTITLE_FONT_SANS_SERIF,
+                    fontSizeSp = size ?: DEFAULT_SUBTITLE_FONT_SIZE_SP,
+                    verticalPosition = pos ?: DEFAULT_SUBTITLE_VERTICAL_POSITION,
+                    widthFraction = width ?: DEFAULT_SUBTITLE_WIDTH_FRACTION,
+                )
+            }
+            val backgroundStyle = combine(
                 preferencesRepository.subtitleBackgroundEnabled,
                 preferencesRepository.subtitleBackgroundColorArgb,
                 preferencesRepository.subtitleBackgroundOpacity,
-            ) { values ->
-                SubtitleStyleConfig(
-                    fontFamilyId = (values[0] as? String) ?: SUBTITLE_FONT_SANS_SERIF,
-                    fontSizeSp = (values[1] as? Float) ?: DEFAULT_SUBTITLE_FONT_SIZE_SP,
-                    verticalPosition = (values[2] as? Float) ?: DEFAULT_SUBTITLE_VERTICAL_POSITION,
-                    widthFraction = (values[3] as? Float) ?: DEFAULT_SUBTITLE_WIDTH_FRACTION,
-                    backgroundEnabled = (values[4] as? Boolean) ?: true,
-                    backgroundColorArgb = (values[5] as? Long) ?: DEFAULT_SUBTITLE_BG_COLOR_ARGB,
-                    backgroundOpacity = (values[6] as? Float) ?: DEFAULT_SUBTITLE_BG_OPACITY,
+            ) { enabled, colorArgb, opacity ->
+                Triple(
+                    enabled ?: true,
+                    colorArgb ?: DEFAULT_SUBTITLE_BG_COLOR_ARGB,
+                    opacity ?: DEFAULT_SUBTITLE_BG_OPACITY,
+                )
+            }
+            combine(typographyAndLayout, backgroundStyle) { base, (bgEnabled, bgColor, bgOpacity) ->
+                base.copy(
+                    backgroundEnabled = bgEnabled,
+                    backgroundColorArgb = bgColor,
+                    backgroundOpacity = bgOpacity,
                 )
             }.collect { style ->
                 _uiState.update { it.copy(subtitleStyle = style) }
