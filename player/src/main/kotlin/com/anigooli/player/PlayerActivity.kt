@@ -3,6 +3,7 @@ package com.anigooli.player
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
