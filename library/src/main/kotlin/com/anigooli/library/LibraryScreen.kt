@@ -87,6 +87,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.anigooli.downloads.DownloadsManagerScreen
+import com.imashnake.animite.api.anilist.sanitize.media.Media
 import kotlinx.coroutines.launch
 import java.io.File
 
