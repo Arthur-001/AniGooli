@@ -172,7 +172,7 @@ class ExploreViewModel @Inject constructor(
                     filterType = filterType,
                     allFilters = when (filterType) {
                         ChipFilterType.GENRE -> mediaListRepository.fetchMediaGenres(
-                            preferencesRepository.isNsfwEnabled.firstOrNull() ?: false
+                            isAdult = true
                         ).toSet()
                         ChipFilterType.FORMAT -> Media.Format.animeFormats().map { it.name }.toSet()
                         ChipFilterType.STATUS -> Media.Status.entries.map { it.name }.toSet()
@@ -238,6 +238,7 @@ class ExploreViewModel @Inject constructor(
         flow4 = page,
         flow5 = prefs,
         transform = { sort, searchQuery, filterSheetOptions, page, prefs ->
+            val hasHentaiGenre = "Hentai" in filterSheetOptions.genres.included
             FilterStrategy(
                 mediaType = MediaType.valueOf(filterSheetOptions.mediaType),
                 sort = listOf(sort),
@@ -251,8 +252,8 @@ class ExploreViewModel @Inject constructor(
                 excludedFormats = filterSheetOptions.format.excluded.map { MediaFormat.valueOf(it) }.ifEmpty { null },
                 includedStatuses = filterSheetOptions.status.included.map { MediaStatus.valueOf(it) }.ifEmpty { null },
                 excludedStatuses = filterSheetOptions.status.excluded.map { MediaStatus.valueOf(it) }.ifEmpty { null },
-                isAdult = filterSheetOptions.isAdult,
-                isNsfwEnabled = prefs.isNsfwEnabled || !searchQuery.isNullOrBlank(),
+                isAdult = filterSheetOptions.isAdult || hasHentaiGenre,
+                isNsfwEnabled = prefs.isNsfwEnabled || !searchQuery.isNullOrBlank() || hasHentaiGenre,
                 language = prefs.language,
                 perPage = prefs.listSize,
             )

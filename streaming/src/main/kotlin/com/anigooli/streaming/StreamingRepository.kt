@@ -8,6 +8,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.net.URLEncoder
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,9 +39,19 @@ class StreamingRepository @Inject constructor(
             runCatching {
                 val trimmed = query.trim()
                 if (trimmed.isEmpty()) return@runCatching emptyList()
-                val req = runtime.buildSearchRequest(trimmed)
-                val resp = httpClient.get(req.url, req.headers, allowCloudflareBypass = false)
-                runtime.parseSearchResponse(resp.body)
+                coroutineScope {
+                    val miruroDeferred = async {
+                        runCatching {
+                            val req = runtime.buildSearchRequest(trimmed)
+                            val resp = httpClient.get(req.url, req.headers, allowCloudflareBypass = false)
+                            runtime.parseSearchResponse(resp.body)
+                        }.getOrDefault(emptyList())
+                    }
+                    val hianimeDeferred = async {
+                        runCatching { searchHianime(trimmed) }.getOrDefault(emptyList())
+                    }
+                    (miruroDeferred.await() + hianimeDeferred.await()).distinctBy { it.providerId }
+                }
             }
         }
 
@@ -72,29 +83,46 @@ class StreamingRepository @Inject constructor(
             }
 
             val aggregated = LinkedHashMap<String, ProviderAnime>()
-            for (q in queries) {
-                val results = runCatching {
-                    val req = runtime.buildSearchRequest(q)
-                    val resp = httpClient.get(req.url, req.headers)
-                    runtime.parseSearchResponse(resp.body)
-                }.getOrDefault(emptyList())
-                results.forEach { item ->
-                    aggregated.putIfAbsent(item.providerId, item)
+            val preferHianimeOnly = explicitProviderId != null && HianimeParser.isHianimeProviderId(explicitProviderId)
+            if (!preferHianimeOnly) {
+                for (q in queries) {
+                    val results = runCatching {
+                        val req = runtime.buildSearchRequest(q)
+                        val resp = httpClient.get(req.url, req.headers)
+                        runtime.parseSearchResponse(resp.body)
+                    }.getOrDefault(emptyList())
+                    results.forEach { item ->
+                        aggregated.putIfAbsent(item.providerId, item)
+                    }
                 }
             }
 
-            val allResults = aggregated.values.toList()
-            val anilistMatches = if (anilistId > 0) {
-                allResults.filter { it.anilistId == anilistId }
-            } else {
-                emptyList()
-            }
-            val titleMatches = allResults.filter { item ->
-                cleanedTitles.any { title ->
-                    isExactOrVariantMatch(item, title)
+            fun buildCandidatePool(): List<ProviderAnime> {
+                val allResults = aggregated.values.toList()
+                val anilistMatches = if (anilistId > 0) {
+                    allResults.filter { it.anilistId == anilistId }
+                } else {
+                    emptyList()
                 }
+                val titleMatches = allResults.filter { item ->
+                    cleanedTitles.any { title ->
+                        isExactOrVariantMatch(item, title)
+                    }
+                }
+                return (anilistMatches + titleMatches).distinctBy { it.providerId }
             }
-            val candidatePool = (anilistMatches + titleMatches).distinctBy { it.providerId }
+
+            var candidatePool = buildCandidatePool()
+            if (preferHianimeOnly || candidatePool.isEmpty() || candidatePool.none { isExplicitlyUncensored(it) }) {
+                for (q in cleanedTitles.take(2)) {
+                    val hianimeResults = runCatching { searchHianime(q) }.getOrDefault(emptyList())
+                    hianimeResults.forEach { item ->
+                        aggregated.putIfAbsent(item.providerId, item)
+                    }
+                }
+                candidatePool = buildCandidatePool()
+            }
+            val allResults = aggregated.values.toList()
 
             val uncensored = candidatePool.firstOrNull { isExplicitlyUncensored(it) }
             val censored = candidatePool.firstOrNull { !isExplicitlyUncensored(it) }
@@ -142,7 +170,9 @@ class StreamingRepository @Inject constructor(
             norm == normalizedBase ||
                 norm == "$normalizedBase uncensored" ||
                 norm == "$normalizedBase censored" ||
-                norm == "$normalizedBase tv"
+                norm == "$normalizedBase tv" ||
+                norm == "$normalizedBase tv ver" ||
+                norm == "$normalizedBase tv version"
         }
     }
 
@@ -156,9 +186,13 @@ class StreamingRepository @Inject constructor(
     suspend fun fetchEpisodes(providerId: String): Result<List<String>> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val req = runtime.buildEpisodesRequest(providerId)
-                val resp = httpClient.get(req.url, req.headers)
-                val episodes = runtime.parseEpisodesResponse(resp.body)
+                val episodes = if (HianimeParser.isHianimeProviderId(providerId)) {
+                    fetchHianimeEpisodes(providerId).map { it.episodeNumber }
+                } else {
+                    val req = runtime.buildEpisodesRequest(providerId)
+                    val resp = httpClient.get(req.url, req.headers)
+                    runtime.parseEpisodesResponse(resp.body)
+                }
                 if (episodes.isEmpty()) throw IOException("No episodes found")
                 episodes
             }
@@ -215,9 +249,13 @@ class StreamingRepository @Inject constructor(
         episode: String,
         audioTrack: AudioTrack,
     ): List<StreamSource> {
-        val req = runtime.buildMediaRequest(providerId, episode, audioTrack.toMode())
-        val resp = httpClient.get(req.url, req.headers)
-        val parsed = runtime.parseMediaResponse(resp.body, audioTrack.toMode())
+        val parsed = if (HianimeParser.isHianimeProviderId(providerId)) {
+            resolveHianimeMediaCandidates(providerId, episode, audioTrack.toMode())
+        } else {
+            val req = runtime.buildMediaRequest(providerId, episode, audioTrack.toMode())
+            val resp = httpClient.get(req.url, req.headers)
+            runtime.parseMediaResponse(resp.body, audioTrack.toMode())
+        }
         if (parsed.candidates.isEmpty()) return emptyList()
 
         val (_, config) = scriptManager.getActiveScriptAndConfig()
@@ -272,4 +310,40 @@ class StreamingRepository @Inject constructor(
             )
         }
     }.getOrDefault(emptyList())
+
+    private suspend fun searchHianime(query: String): List<ProviderAnime> {
+        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+        val url = "${HianimeParser.BASE_URL}/search?keyword=$encoded"
+        val headers = mapOf("User-Agent" to HianimeParser.USER_AGENT)
+        val resp = httpClient.get(url, headers, allowCloudflareBypass = false)
+        return HianimeParser.parseSearchHtml(resp.body)
+    }
+
+    private suspend fun fetchHianimeEpisodes(providerId: String): List<HianimeEpisode> {
+        val slug = HianimeParser.extractSlug(providerId)
+        val numericId = HianimeParser.extractNumericId(slug)
+        val url = "${HianimeParser.BASE_URL}/api/theme/episode/list/$numericId"
+        val headers = mapOf("User-Agent" to HianimeParser.USER_AGENT)
+        val resp = httpClient.get(url, headers, allowCloudflareBypass = false)
+        return HianimeParser.parseEpisodesHtml(resp.body, slug)
+    }
+
+    private suspend fun resolveHianimeMediaCandidates(
+        providerId: String,
+        episode: String,
+        mode: String,
+    ): MediaCandidateList {
+        val episodes = fetchHianimeEpisodes(providerId)
+        val epId = episodes.firstOrNull { it.episodeNumber == episode }?.episodeId
+            ?: return MediaCandidateList()
+        val headers = mapOf("User-Agent" to HianimeParser.USER_AGENT)
+        val serversUrl = "${HianimeParser.BASE_URL}/api/theme/episode/servers?episodeId=$epId"
+        val serversResp = httpClient.get(serversUrl, headers, allowCloudflareBypass = false)
+        val embedUrl = HianimeParser.parseServerEmbedUrl(serversResp.body, mode)
+            ?: return MediaCandidateList()
+        val embedResp = httpClient.get(embedUrl, headers, allowCloudflareBypass = false)
+        val jsonText = HianimeParser.extractAndDeobfuscateEmbed(embedResp.body)
+            ?: return MediaCandidateList()
+        return HianimeParser.parseZokoEmbedJson(jsonText, embedUrl)
+    }
 }
