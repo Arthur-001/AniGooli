@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name = "latest_episodes">Latest Episodes</string>
     <string name = "trending_now">Trending Now</string>
     <string name = "popular_this_season">Popular This Season</string>
     <string name = "upcoming_next_season">Upcoming Next Season</string>

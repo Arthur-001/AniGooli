@@ -11,6 +11,7 @@ import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.sanitize.media.MediaList
 import com.imashnake.animite.api.anilist.sanitize.settings.Prefs
 import com.imashnake.animite.api.anilist.type.MediaSort
+import com.imashnake.animite.api.anilist.type.MediaStatus
 import com.imashnake.animite.api.anilist.type.MediaType
 import com.imashnake.animite.api.preferences.PreferencesRepository
 import com.imashnake.animite.core.model.AnimeList
@@ -92,6 +93,24 @@ class AnimeViewModel @Inject constructor(
             Prefs(isNsfwEnabled, Media.Language.safeValueOf(language), listSize)
         }
     )
+
+    val latestEpisodesMedia = combine(
+        flow = refreshTrigger.onStart { emit(Unit) },
+        flow2 = prefs,
+        transform = ::Pair
+    ).flatMapLatest { (_, prefs) ->
+        mediaListRepository.fetchMediaList(
+            useNetwork = useNetwork,
+            filterStrategy = FilterStrategy(
+                mediaType = MediaType.ANIME,
+                sort = listOf(MediaSort.UPDATED_AT_DESC),
+                includedStatuses = listOf(MediaStatus.RELEASING),
+                isNsfwEnabled = prefs.isNsfwEnabled,
+                language = prefs.language,
+                perPage = prefs.listSize
+            ),
+        )
+    }.asResource { AnimeRow(AnimeList.LATEST_EPISODES.res, it) }
 
     val trendingMedia = combine(
         flow = refreshTrigger.onStart { emit(Unit) },
@@ -186,14 +205,29 @@ class AnimeViewModel @Inject constructor(
     }.asResource { AnimeRow(AnimeList.NEWLY_ADDED.res, it) }
 
     val lists = combine(
+        latestEpisodesMedia,
         trendingMedia,
         popularMediaThisSeason,
         upcomingMediaNextSeason,
         allTimePopular,
         newlyAdded,
         preferencesRepository.animeListsIndices,
-    ) { trendingNow, popularThisSeason, upcomingNextSeason, allTimePopular, newlyAdded, indices ->
-        indices?.toMutableList().orEmpty().mapNotNull {
+    ) { values ->
+        @Suppress("UNCHECKED_CAST")
+        val latestEpisodes = values[0] as Resource<AnimeRow>
+        @Suppress("UNCHECKED_CAST")
+        val trendingNow = values[1] as Resource<AnimeRow>
+        @Suppress("UNCHECKED_CAST")
+        val popularThisSeason = values[2] as Resource<AnimeRow>
+        @Suppress("UNCHECKED_CAST")
+        val upcomingNextSeason = values[3] as Resource<AnimeRow>
+        @Suppress("UNCHECKED_CAST")
+        val allTimePopular = values[4] as Resource<AnimeRow>
+        @Suppress("UNCHECKED_CAST")
+        val newlyAdded = values[5] as Resource<AnimeRow>
+        val indices = values[6] as ByteArray?
+
+        val ordered = indices?.toMutableList().orEmpty().mapNotNull {
             when (it.toInt()) {
                 1 -> trendingNow
                 2 -> popularThisSeason
@@ -203,6 +237,7 @@ class AnimeViewModel @Inject constructor(
                 else -> null
             }
         }
+        listOf(latestEpisodes) + ordered
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(1000),
@@ -212,11 +247,12 @@ class AnimeViewModel @Inject constructor(
             Resource.loading(),
             Resource.loading(),
             Resource.loading(),
+            Resource.loading(),
         ),
     )
 
     val isLoading = combineTransform(
-        listOf(trendingMedia, popularMediaThisSeason, upcomingMediaNextSeason, allTimePopular, newlyAdded)
+        listOf(latestEpisodesMedia, trendingMedia, popularMediaThisSeason, upcomingMediaNextSeason, allTimePopular, newlyAdded)
     ) { resources ->
         emit(!resources.none { it is Resource.Loading<*> })
     }.stateIn(viewModelScope, SharingStarted.Lazily, true)

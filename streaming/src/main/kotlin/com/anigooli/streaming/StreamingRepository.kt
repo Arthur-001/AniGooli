@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,6 +26,8 @@ class StreamingRepository @Inject constructor(
     private val scriptManager: ExtractorScriptManager,
     private val preferencesRepository: PreferencesRepository,
 ) {
+    private val providerTitlesCache = ConcurrentHashMap<String, List<String>>()
+
     /** Refreshes the remote extractor script and upstream `ani-cli` config. */
     suspend fun refreshExtractor(force: Boolean = false): ExtractorStatus {
         return scriptManager.refreshIfNeeded(force = force)
@@ -50,7 +53,11 @@ class StreamingRepository @Inject constructor(
                     val hianimeDeferred = async {
                         runCatching { searchHianime(trimmed) }.getOrDefault(emptyList())
                     }
-                    (miruroDeferred.await() + hianimeDeferred.await()).distinctBy { it.providerId }
+                    val hentaiStreamDeferred = async {
+                        runCatching { searchHentaiStream(trimmed) }.getOrDefault(emptyList())
+                    }
+                    (miruroDeferred.await() + hianimeDeferred.await() + hentaiStreamDeferred.await())
+                        .distinctBy { it.providerId }
                 }
             }
         }
@@ -113,7 +120,11 @@ class StreamingRepository @Inject constructor(
             }
 
             var candidatePool = buildCandidatePool()
-            if (preferHianimeOnly || candidatePool.isEmpty() || candidatePool.none { isExplicitlyUncensored(it) }) {
+            val preferHentaiStreamOnly =
+                explicitProviderId != null && HentaiStreamParser.isHentaiStreamProviderId(explicitProviderId)
+            if (!preferHentaiStreamOnly &&
+                (preferHianimeOnly || candidatePool.isEmpty() || candidatePool.none { isExplicitlyUncensored(it) })
+            ) {
                 for (q in cleanedTitles.take(2)) {
                     val hianimeResults = runCatching { searchHianime(q) }.getOrDefault(emptyList())
                     hianimeResults.forEach { item ->
@@ -121,6 +132,18 @@ class StreamingRepository @Inject constructor(
                     }
                 }
                 candidatePool = buildCandidatePool()
+            }
+            if (preferHentaiStreamOnly || candidatePool.isEmpty()) {
+                for (q in cleanedTitles.take(2)) {
+                    val hsResults = runCatching { searchHentaiStream(q) }.getOrDefault(emptyList())
+                    hsResults.forEach { item ->
+                        aggregated.putIfAbsent(item.providerId, item)
+                    }
+                }
+                candidatePool = buildCandidatePool()
+            }
+            candidatePool.forEach { item ->
+                providerTitlesCache[item.providerId] = cleanedTitles
             }
             val allResults = aggregated.values.toList()
 
@@ -165,6 +188,8 @@ class StreamingRepository @Inject constructor(
     private fun isExactOrVariantMatch(item: ProviderAnime, baseTitle: String): Boolean {
         val normalizedBase = normalizeMatchTitle(baseTitle)
         if (normalizedBase.isEmpty()) return false
+        val isHentaiStream = HentaiStreamParser.isHentaiStreamProviderId(item.providerId)
+        val baseWords = normalizedBase.split(" ").filter { it.length >= 3 }
         return listOfNotNull(item.title, item.englishTitle, item.romajiTitle).any { raw ->
             val norm = normalizeMatchTitle(raw)
             norm == normalizedBase ||
@@ -172,7 +197,12 @@ class StreamingRepository @Inject constructor(
                 norm == "$normalizedBase censored" ||
                 norm == "$normalizedBase tv" ||
                 norm == "$normalizedBase tv ver" ||
-                norm == "$normalizedBase tv version"
+                norm == "$normalizedBase tv version" ||
+                (isHentaiStream && (
+                    norm.startsWith("$normalizedBase ") ||
+                        norm.contains(normalizedBase) ||
+                        (baseWords.size >= 2 && baseWords.all { norm.contains(it) })
+                    ))
         }
     }
 
@@ -186,12 +216,15 @@ class StreamingRepository @Inject constructor(
     suspend fun fetchEpisodes(providerId: String): Result<List<String>> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val episodes = if (HianimeParser.isHianimeProviderId(providerId)) {
-                    fetchHianimeEpisodes(providerId).map { it.episodeNumber }
-                } else {
-                    val req = runtime.buildEpisodesRequest(providerId)
-                    val resp = httpClient.get(req.url, req.headers)
-                    runtime.parseEpisodesResponse(resp.body)
+                val episodes = when {
+                    HianimeParser.isHianimeProviderId(providerId) ->
+                        fetchHianimeEpisodes(providerId).map { it.episodeNumber }
+                    HentaiStreamParser.isHentaiStreamProviderId(providerId) -> listOf("1")
+                    else -> {
+                        val req = runtime.buildEpisodesRequest(providerId)
+                        val resp = httpClient.get(req.url, req.headers)
+                        runtime.parseEpisodesResponse(resp.body)
+                    }
                 }
                 if (episodes.isEmpty()) throw IOException("No episodes found")
                 episodes
@@ -224,6 +257,11 @@ class StreamingRepository @Inject constructor(
                 sources = resolveSourcesForMode(providerId, episode, AudioTrack.JAPANESE)
             }
 
+            if (sources.isEmpty() && !HentaiStreamParser.isHentaiStreamProviderId(providerId)) {
+                val fallbackTitles = providerTitlesCache[providerId].orEmpty()
+                sources = resolveHentaiStreamFallbackByTitles(fallbackTitles)
+            }
+
             if (sources.isEmpty()) {
                 throw IOException("No playable streams found for episode $episode")
             }
@@ -249,12 +287,16 @@ class StreamingRepository @Inject constructor(
         episode: String,
         audioTrack: AudioTrack,
     ): List<StreamSource> {
-        val parsed = if (HianimeParser.isHianimeProviderId(providerId)) {
-            resolveHianimeMediaCandidates(providerId, episode, audioTrack.toMode())
-        } else {
-            val req = runtime.buildMediaRequest(providerId, episode, audioTrack.toMode())
-            val resp = httpClient.get(req.url, req.headers)
-            runtime.parseMediaResponse(resp.body, audioTrack.toMode())
+        val parsed = when {
+            HianimeParser.isHianimeProviderId(providerId) ->
+                resolveHianimeMediaCandidates(providerId, episode, audioTrack.toMode())
+            HentaiStreamParser.isHentaiStreamProviderId(providerId) ->
+                resolveHentaiStreamMediaCandidates(providerId)
+            else -> {
+                val req = runtime.buildMediaRequest(providerId, episode, audioTrack.toMode())
+                val resp = httpClient.get(req.url, req.headers)
+                runtime.parseMediaResponse(resp.body, audioTrack.toMode())
+            }
         }
         if (parsed.candidates.isEmpty()) return emptyList()
 
@@ -345,5 +387,47 @@ class StreamingRepository @Inject constructor(
         val jsonText = HianimeParser.extractAndDeobfuscateEmbed(embedResp.body)
             ?: return MediaCandidateList()
         return HianimeParser.parseZokoEmbedJson(jsonText, embedUrl)
+    }
+
+    private suspend fun searchHentaiStream(query: String): List<ProviderAnime> {
+        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+        val url = "${HentaiStreamParser.BASE_URL}/search?q=$encoded"
+        val headers = mapOf("User-Agent" to HentaiStreamParser.USER_AGENT)
+        val resp = httpClient.get(url, headers, allowCloudflareBypass = false)
+        return HentaiStreamParser.parseSearchHtml(resp.body)
+    }
+
+    private suspend fun resolveHentaiStreamMediaCandidates(providerId: String): MediaCandidateList {
+        val slug = HentaiStreamParser.extractSlug(providerId)
+        val url = "${HentaiStreamParser.BASE_URL}/video/$slug/"
+        val headers = mapOf("User-Agent" to HentaiStreamParser.USER_AGENT)
+        val resp = httpClient.get(url, headers, allowCloudflareBypass = false)
+        return HentaiStreamParser.parseVideoPageCandidates(resp.body)
+    }
+
+    private suspend fun resolveHentaiStreamFallbackByTitles(titles: List<String>): List<StreamSource> {
+        for (title in titles.take(2)) {
+            val results = runCatching { searchHentaiStream(title) }.getOrDefault(emptyList())
+            val matched = results.firstOrNull { isExactOrVariantMatch(it, title) } ?: continue
+            val candidates = runCatching {
+                resolveHentaiStreamMediaCandidates(matched.providerId).candidates
+            }.getOrDefault(emptyList())
+            if (candidates.isNotEmpty()) {
+                return candidates.map { cand ->
+                    StreamSource(
+                        qualityLabel = cand.quality,
+                        height = QualitySelector.parseHeight(cand.quality),
+                        serverName = cand.server,
+                        url = cand.url,
+                        referer = cand.referer,
+                        origin = cand.origin,
+                        isHls = cand.format == "hls",
+                        audioUrl = null,
+                        subtitleUrl = cand.subtitleUrl,
+                    )
+                }
+            }
+        }
+        return emptyList()
     }
 }
