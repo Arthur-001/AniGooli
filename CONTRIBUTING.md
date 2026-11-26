@@ -1,9 +1,24 @@
 # Contributing
-* PRs are more than welcome, if you plan on working on a new feature, please open an issue to make sure it's viable and worth our time.
-* If you want to work on an existing issue, get in touch via Discord so I can loop you in!
-* If you're looking for something to work on, see the `TODO` list in Android Studio for some low-hanging fruits.
-* Join the [Discord](https://discord.gg/G8wF7pjpya) server to keep in touch!
+
+Contributions of all kinds are welcome! If you plan to work on a new feature or significant change, please open an issue first to discuss the idea and avoid duplicated effort.
+
+## Getting Started
+1. **Fork & Clone** the repository:
+   ```bash
+   git clone https://github.com/<your-username>/AniGooli.git
+   cd AniGooli
+   ```
+2. **Create a branch** for your change:
+   ```bash
+   git checkout -b feat/your-feature-name
+   ```
+3. **Make your changes** in Android Studio or your preferred editor:
+   - Keep code formatted and clean (Detekt rules live in `config/detekt/detekt.yml`).
+   - If your change modifies app code, features, or resources, increment `versionCode` and update `versionName` in `app/build.gradle.kts`.
+4. **Verify via GitHub Actions:**
+   - Push your branch to your fork and open a Pull Request against `main`.
+   - GitHub Actions automatically runs unit tests (`testDebugUnitTest`) and builds Debug/Release APKs on PRs, so even if your local hardware is limited, CI verifies your build for you.
 
 ## Pull Requests and Commits
-* Commit messages should essentially be sentences without periods; add the description if it makes sense to do so (sentence *with* a period). For example: `git commit -am "Commit message" -m "Commit description."`.
-* Please add a PR description that clearly describes your changes, with links to relevant documentation, API references, etc.
+- Commit messages should be concise sentences without trailing periods; add an optional description sentence with a period when helpful (e.g., `git commit -am "Fix player seek gesture" -m "Clamp seek preview within episode duration."`).
+- Add a clear PR description explaining what changed, why, and any relevant issue or documentation links.
