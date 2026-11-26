@@ -14,6 +14,7 @@ import com.imashnake.animite.core.ui.Constants
 import com.imashnake.animite.core.ui.component.MediaCardSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.SharingStarted
@@ -85,7 +86,7 @@ class SearchViewModel @Inject constructor(
                 val combined = if (mediaType == MediaType.ANIME) {
                     providerSearchHelper.mergeProviderResults(query, anilistList)
                 } else {
-                    persistentListOf<Media.Medium>().addAll(anilistList)
+                    anilistList.toImmutableList()
                 }
                 emit(Resource.success(combined))
             }
