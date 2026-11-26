@@ -136,7 +136,7 @@ data class Media(
             }
         }
 
-        private fun getAnimeInfo(animeInfo: AnimeInfo?) = buildList {
+        internal fun getAnimeInfo(animeInfo: AnimeInfo?) = buildList {
             if (
                 addAll(
                     listOfNotNull(
@@ -174,7 +174,7 @@ data class Media(
             }
         }.toImmutableList()
 
-        private fun getRankings(
+        internal fun getRankings(
             rankings: List<MediaQuery.Ranking?>?,
             averageScore: Int?
         ): ImmutableList<Pair<Ranking.TimeSpan, ImmutableList<Ranking>>> {
@@ -243,7 +243,7 @@ data class Media(
             ).toImmutableList()
         }
 
-        private fun getStreamingEpisodes(streamingEpisodes: List<MediaQuery.StreamingEpisode?>?): ImmutableList<Episode> {
+        internal fun getStreamingEpisodes(streamingEpisodes: List<MediaQuery.StreamingEpisode?>?): ImmutableList<Episode> {
             if (streamingEpisodes.isNullOrEmpty()) return persistentListOf()
 
             val regex = Regex("""Episode\s+(\d+(?:\.\d+)?)(?:\s*-\s*(.+))?""")

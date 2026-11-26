@@ -36,6 +36,7 @@ class MediaTest {
     fun `character dob is null if year and month are null`() {
         val actual = Media.Credit(getCharacterSmall(
             dateOfBirth = CharacterSmall.DateOfBirth(
+                __typename = "FuzzyDate",
                 year = null,
                 month = null,
                 day = 23
@@ -49,6 +50,7 @@ class MediaTest {
     fun `character dob is year if only month is null`() {
         val actual = Media.Credit(getCharacterSmall(
             dateOfBirth = CharacterSmall.DateOfBirth(
+                __typename = "FuzzyDate",
                 year = 2025,
                 month = null,
                 day = 23
@@ -62,6 +64,7 @@ class MediaTest {
     fun `character dob if year is null`() {
         val actual = Media.Credit(getCharacterSmall(
             dateOfBirth = CharacterSmall.DateOfBirth(
+                __typename = "FuzzyDate",
                 year = null,
                 month = 11,
                 day = 23
@@ -75,6 +78,7 @@ class MediaTest {
     fun `character dob if day is null`() {
         val actual = Media.Credit(getCharacterSmall(
             dateOfBirth = CharacterSmall.DateOfBirth(
+                __typename = "FuzzyDate",
                 year = 2025,
                 month = 11,
                 day = null
@@ -88,6 +92,7 @@ class MediaTest {
     fun `character dob if year and day are null`() {
         val actual = Media.Credit(getCharacterSmall(
             dateOfBirth = CharacterSmall.DateOfBirth(
+                __typename = "FuzzyDate",
                 year = null,
                 month = 11,
                 day = null
@@ -101,6 +106,7 @@ class MediaTest {
     fun `character dob`() {
         val actual = Media.Credit(getCharacterSmall(
             dateOfBirth = CharacterSmall.DateOfBirth(
+                __typename = "FuzzyDate",
                 year = 2025,
                 month = 11,
                 day = 23
@@ -168,6 +174,7 @@ class MediaTest {
     private fun getCharacterSmall(
         alternative: List<String?>? = listOf("name1", "name2"),
         dateOfBirth: CharacterSmall.DateOfBirth = CharacterSmall.DateOfBirth(
+            __typename = "FuzzyDate",
             year = 2025,
             month = 11,
             day = 23
@@ -176,11 +183,15 @@ class MediaTest {
         age: String? = "50",
         gender: String? = "male"
     ) = CharacterSmall(
+        __typename = "Character",
         id = 12345,
         image = CharacterSmall.Image(
+            __typename = "CharacterImage",
             large = "image"
         ),
         name = CharacterSmall.Name(
+            __typename = "CharacterName",
+            userPreferred = "fullName",
             full = "fullName",
             alternative = alternative
         ),
@@ -302,11 +313,13 @@ class MediaTest {
         duration: Int? = 22,
         status: MediaStatus? = MediaStatus.RELEASING,
         startDate: AnimeInfo.StartDate? = AnimeInfo.StartDate(
+            __typename = "FuzzyDate",
             year = 2025,
             month = 10,
             day = 15
         ),
         endDate: AnimeInfo.EndDate? = AnimeInfo.EndDate(
+            __typename = "FuzzyDate",
             year = 2025,
             month = 11,
             day = 15
@@ -314,10 +327,17 @@ class MediaTest {
         season: MediaSeason? = MediaSeason.FALL,
         seasonYear: Int? = 2025,
         studios: AnimeInfo.Studios? = AnimeInfo.Studios(
-            nodes = listOf(AnimeInfo.Node(name = "studio"))
+            __typename = "StudioConnection",
+            nodes = listOf(
+                AnimeInfo.Node(
+                    __typename = "Studio",
+                    name = "studio"
+                )
+            )
         ),
         source: MediaSource? = MediaSource.MANGA
     ) = AnimeInfo(
+        __typename = "Media",
         nextAiringEpisode = null,
         format = format,
         episodes = episodes,
@@ -338,6 +358,7 @@ class MediaTest {
         val actual = Media.getStreamingEpisodes(
             streamingEpisodes = listOf(
                 MediaQuery.StreamingEpisode(
+                    __typename = "MediaStreamingEpisode",
                     title = "Episode 21.5 - Some Episode Title",
                     thumbnail = "thumbnail",
                     url = "url",
@@ -365,31 +386,37 @@ class MediaTest {
         val actual = Media.getRankings(
             rankings = listOf(
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 6,
                     type = MediaRankType.RATED,
                     allTime = true
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 5,
                     type = MediaRankType.POPULAR,
                     allTime = true
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 4,
                     type = MediaRankType.RATED,
                     allTime = false
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 3,
                     type = MediaRankType.POPULAR,
                     allTime = false
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 2,
                     type = MediaRankType.RATED,
                     allTime = false
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 1,
                     type = MediaRankType.POPULAR,
                     allTime = false
@@ -445,11 +472,13 @@ class MediaTest {
         val actual = Media.getRankings(
             rankings = listOf(
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 6,
                     type = MediaRankType.RATED,
                     allTime = true
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 5,
                     type = MediaRankType.POPULAR,
                     allTime = true
@@ -493,11 +522,13 @@ class MediaTest {
         val actual = Media.getRankings(
             rankings = listOf(
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 4,
                     type = MediaRankType.RATED,
                     allTime = false
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 3,
                     type = MediaRankType.POPULAR,
                     allTime = false
@@ -538,16 +569,19 @@ class MediaTest {
         val actual = Media.getRankings(
             rankings = listOf(
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 6,
                     type = MediaRankType.RATED,
                     allTime = true
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 4,
                     type = MediaRankType.RATED,
                     allTime = false
                 ),
                 MediaQuery.Ranking(
+                    __typename = "MediaRank",
                     rank = 2,
                     type = MediaRankType.RATED,
                     allTime = false
