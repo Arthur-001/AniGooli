@@ -127,8 +127,8 @@ private enum class GestureHudType { SEEK, VOLUME, BRIGHTNESS, SPEED }
  * double-tap ±10s, long-press 2x speed, pinch-zoom, quality selection, per-anime JP/Dub + Subtitles,
  * live single-slot pre-buffer progress, pre-buffer-reusing Download, PiP, and External MPV launch.
  */
-@AndroidEntryPoint
-class PlayerActivity : ComponentActivity() {
+@AndroidEntryPoint(ComponentActivity::class)
+class PlayerActivity : Hilt_PlayerActivity() {
 
     private val viewModel: PlayerViewModel by viewModels()
     private var initialBrightness: Float = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
