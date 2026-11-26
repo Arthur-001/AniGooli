@@ -29,8 +29,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -44,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFontFamilyResolver
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -139,6 +143,12 @@ class MainActivity : ComponentActivity() {
             }
 
             val notificationTarget by pendingNotificationMedia.collectAsStateWithLifecycle()
+            val availableAppUpdate by settingsViewModel.availableAppUpdate.collectAsStateWithLifecycle()
+            val uriHandler = LocalUriHandler.current
+
+            LaunchedEffect(Unit) {
+                settingsViewModel.checkForAppUpdateIfNeeded(BuildConfig.VERSION_NAME)
+            }
 
             val theme by settingsViewModel.theme.collectAsState(initial = Theme.DEVICE_THEME.name)
             val useSystemColorScheme by settingsViewModel.useSystemColorScheme.collectAsState(initial = false)
@@ -175,6 +185,38 @@ class MainActivity : ComponentActivity() {
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.background)
                 )
+
+                availableAppUpdate?.let { update ->
+                    AlertDialog(
+                        onDismissRequest = settingsViewModel::dismissAppUpdateDialog,
+                        title = { Text("Update Available") },
+                        text = {
+                            val notesPreview = update.releaseNotes
+                                .takeIf { it.isNotBlank() }
+                                ?.let { "\n\n${it.take(300)}" }
+                                .orEmpty()
+                            Text(
+                                "AniGooli ${update.versionTag} is available on GitHub " +
+                                    "(current: v${BuildConfig.VERSION_NAME}).$notesPreview"
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    uriHandler.openUri(update.apkDownloadUrl ?: update.releaseUrl)
+                                    settingsViewModel.dismissAppUpdateDialog()
+                                }
+                            ) {
+                                Text("Download")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = settingsViewModel::dismissAppUpdateDialog) {
+                                Text("Later")
+                            }
+                        },
+                    )
+                }
             }
         }
     }

@@ -39,6 +39,7 @@ class SettingsViewModel @Inject constructor(
     private val streamingRepository: StreamingRepository,
     private val preBufferManager: PreBufferManager,
     private val releaseScheduler: ReleaseScheduler,
+    private val appUpdateChecker: AppUpdateChecker,
 ) : ViewModel() {
 
     val isLoggedIn = preferencesRepository
@@ -113,6 +114,15 @@ class SettingsViewModel @Inject constructor(
 
     private val _preBufferCacheBytes = MutableStateFlow(0L)
     val preBufferCacheBytes = _preBufferCacheBytes.asStateFlow()
+
+    private val _availableAppUpdate = MutableStateFlow<AppUpdateInfo?>(null)
+    val availableAppUpdate = _availableAppUpdate.asStateFlow()
+
+    private val _isCheckingAppUpdate = MutableStateFlow(false)
+    val isCheckingAppUpdate = _isCheckingAppUpdate.asStateFlow()
+
+    private val _appUpdateStatusMessage = MutableStateFlow<String?>(null)
+    val appUpdateStatusMessage = _appUpdateStatusMessage.asStateFlow()
 
     init {
         refreshExtractorStatus()
@@ -280,5 +290,39 @@ class SettingsViewModel @Inject constructor(
     /** Updates the global default anime censorship version preference. */
     fun setDefaultCensorshipVersion(version: String) = viewModelScope.launch(Dispatchers.IO) {
         preferencesRepository.setDefaultCensorshipVersion(version)
+    }
+
+    /** Checks GitHub Releases once per 24 hours when the app opens. */
+    fun checkForAppUpdateIfNeeded(currentVersion: String) = viewModelScope.launch(Dispatchers.IO) {
+        val result = appUpdateChecker.checkForUpdate(currentVersion, force = false)
+        if (result is AppUpdateCheckResult.UpdateAvailable) {
+            _availableAppUpdate.value = result.info
+        }
+    }
+
+    /** Manually checks GitHub Releases for a newer app version from Settings. */
+    fun checkForAppUpdateNow(currentVersion: String) = viewModelScope.launch(Dispatchers.IO) {
+        if (_isCheckingAppUpdate.value) return@launch
+        _isCheckingAppUpdate.value = true
+        _appUpdateStatusMessage.value = null
+        when (val result = appUpdateChecker.checkForUpdate(currentVersion, force = true)) {
+            is AppUpdateCheckResult.UpdateAvailable -> {
+                _availableAppUpdate.value = result.info
+                _appUpdateStatusMessage.value = "Update available: ${result.info.versionTag}"
+            }
+            is AppUpdateCheckResult.UpToDate -> {
+                _appUpdateStatusMessage.value = "You are on the latest version (v$currentVersion)"
+            }
+            is AppUpdateCheckResult.Error -> {
+                _appUpdateStatusMessage.value = "Update check failed: ${result.message}"
+            }
+            AppUpdateCheckResult.Skipped -> Unit
+        }
+        _isCheckingAppUpdate.value = false
+    }
+
+    /** Dismisses the in-app update notification dialog. */
+    fun dismissAppUpdateDialog() {
+        _availableAppUpdate.value = null
     }
 }

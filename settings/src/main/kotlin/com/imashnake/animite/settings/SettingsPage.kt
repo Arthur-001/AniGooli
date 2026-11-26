@@ -42,7 +42,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -157,6 +159,8 @@ fun SettingsPage(
     val scoreFormat by viewModel.scoreFormat.collectAsState(initial = ScoreFormat.POINT_10_DECIMAL.name)
 
     val isDevOptionsEnabled by viewModel.isDevOptionsEnabled.collectAsState(initial = false)
+    val isCheckingAppUpdate by viewModel.isCheckingAppUpdate.collectAsState()
+    val appUpdateStatusMessage by viewModel.appUpdateStatusMessage.collectAsState()
 
     val isDarkMode = selectedTheme == Theme.DARK.name ||
             (selectedTheme == Theme.DEVICE_THEME.name && isSystemInDarkTheme())
@@ -859,6 +863,13 @@ fun SettingsPage(
                                 }
                             )
 
+                            CheckForUpdatesItem(
+                                isDarkMode = isDarkMode,
+                                isChecking = isCheckingAppUpdate,
+                                statusMessage = appUpdateStatusMessage,
+                                onClick = { viewModel.checkForAppUpdateNow(versionName) },
+                            )
+
                             PrivacyPolicyItem(isDarkMode = isDarkMode)
                         }
                     }
@@ -1280,6 +1291,61 @@ private fun AboutItem(
                         imageVector = ImageVector.vectorResource(R.drawable.github),
                         contentDescription = stringResource(R.string.github),
                         modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CheckForUpdatesItem(
+    isDarkMode: Boolean,
+    isChecking: Boolean,
+    statusMessage: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val background by animateColorAsState(
+        targetValue = if (isDarkMode) Color(0x190FFF66) else Color(0x59FFC0CB),
+        animationSpec = tween(500)
+    )
+
+    CompositionLocalProvider(LocalPaddings provides rememberDefaultPaddings()) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(LocalPaddings.current.medium),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(LocalPaddings.current.small))
+                .clickable(enabled = !isChecking, onClick = onClick)
+                .background(background)
+                .padding(LocalPaddings.current.medium)
+                .height(IntrinsicSize.Min)
+        ) {
+            if (isChecking) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    strokeWidth = 2.5.dp,
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Refresh,
+                    contentDescription = "Check for App Updates",
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (isChecking) "Checking for Updates..." else "Check for App Updates",
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.9f),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                if (!statusMessage.isNullOrBlank()) {
+                    Text(
+                        text = statusMessage,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.labelSmall,
                     )
                 }
             }

@@ -330,6 +330,13 @@ class PreferencesRepository internal constructor(
         dataStore.setValue(extractorLastCheckedMsKey, timestampMs)
     }
 
+    private val appUpdateLastCheckedMsKey = longPreferencesKey("app_update_last_checked_ms")
+    /** Epoch millis when GitHub app release update check last succeeded. */
+    val appUpdateLastCheckedMs = dataStore.getValue(appUpdateLastCheckedMsKey, 0L)
+    suspend fun setAppUpdateLastCheckedMs(timestampMs: Long) {
+        dataStore.setValue(appUpdateLastCheckedMsKey, timestampMs)
+    }
+
     private val mediaCardSizeKey = stringPreferencesKey("media_card_size")
     /** Global card size preference across Anime, Manga, and Explore pages. */
     val mediaCardSize = dataStore.getValue(mediaCardSizeKey, CARD_SIZE_COMPACT)
