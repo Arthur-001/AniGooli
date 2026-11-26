@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imeNestedScroll
 import androidx.compose.foundation.layout.imePadding
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,8 +43,8 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import com.anigooli.streaming.ProviderAnime
 import com.imashnake.animite.api.anilist.type.MediaType
+import com.imashnake.animite.core.resource.Resource
 import com.imashnake.animite.core.ui.LocalPaddings
 import com.imashnake.animite.core.ui.ext.copy
 import com.imashnake.animite.explore.MediaMediumList
@@ -54,7 +56,7 @@ import com.imashnake.animite.navigation.R as navigationR
  *
  * @param hasExtraPadding if the search bar should have extra bottom padding to accommodate the
  * [com.imashnake.animite.navigation.NavigationBar].
- * @param onItemClick called when media with an ID, [MediaType], and optional [ProviderAnime] is clicked.
+ * @param onItemClick called when media with an ID, [MediaType], and optional [SearchFallbackMeta] is clicked.
  * @param modifier the [Modifier] to be applied to this Front Drop.
  * @param viewModel [SearchViewModel] instance.
  */
@@ -63,7 +65,7 @@ import com.imashnake.animite.navigation.R as navigationR
 fun SearchFrontDrop(
     hasExtraPadding: Boolean,
     isFabVisible: Boolean,
-    onItemClick: (Int, MediaType, ProviderAnime?) -> Unit,
+    onItemClick: (Int, MediaType, SearchFallbackMeta?) -> Unit,
     modifier: Modifier = Modifier,
     contentWindowInsets: WindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
     viewModel: SearchViewModel = hiltViewModel()
@@ -110,6 +112,14 @@ fun SearchFrontDrop(
             .drawBehind { drawRect(frontDropColor) }
     )
 
+    if (isFabVisible && hasQuery && searchList is Resource.Loading) {
+        LinearProgressIndicator(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = insetPaddingValues.calculateTopPadding()),
+        )
+    }
+
     searchList.data?.let {
         AnimatedVisibility(
             visible = isFabVisible && (it.isNotEmpty() || isExpanded),
@@ -121,7 +131,7 @@ fun SearchFrontDrop(
                 onItemClick = { id ->
                     keyboardController?.hide()
                     isExpanded = false
-                    onItemClick(id, searchMediaType, viewModel.getProviderEntry(id))
+                    onItemClick(id, searchMediaType, viewModel.getFallbackMeta(id))
                 },
                 shouldShowRank = false,
                 cardSize = cardSize,

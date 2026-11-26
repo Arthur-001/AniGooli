@@ -89,15 +89,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
-import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.ui.PlayerView
 import com.anigooli.streaming.AudioTrack
@@ -250,6 +250,7 @@ private fun PlayerScreen(
     var brightnessLevel by remember { mutableFloatStateOf(0.5f) }
     var tapIndicatorText by remember { mutableStateOf<String?>(null) }
     var viewportSize by remember { mutableStateOf(IntSize(1, 1)) }
+    var playerErrorText by remember { mutableStateOf<String?>(null) }
 
     // Wire player lifecycle & listener
     DisposableEffect(exoPlayer) {
@@ -261,8 +262,14 @@ private fun PlayerScreen(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 isBuffering = playbackState == Player.STATE_BUFFERING
                 if (playbackState == Player.STATE_READY) {
+                    playerErrorText = null
                     durationMs = exoPlayer.duration.coerceAtLeast(0L)
                 }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isBuffering = false
+                playerErrorText = error.localizedMessage ?: "Playback failed"
             }
         }
         exoPlayer.addListener(listener)
@@ -275,28 +282,23 @@ private fun PlayerScreen(
 
     // Prepare media source whenever stream source or local file changes
     LaunchedEffect(state.selectedSource, state.localVideoPath, state.isLocalFile) {
+        playerErrorText = null
         if (state.isLocalFile) {
             val path = state.localVideoPath ?: return@LaunchedEffect
             val dataFactory = DefaultDataSource.Factory(context)
-            val videoSource = ProgressiveMediaSource.Factory(dataFactory)
-                .createMediaSource(MediaItem.fromUri(Uri.fromFile(File(path))))
-            val sources = mutableListOf<MediaSource>(videoSource)
+            val builder = MediaItem.Builder().setUri(Uri.fromFile(File(path)))
             state.localSubtitlePath?.takeIf { it.isNotBlank() }?.let { subPath ->
-                val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(File(subPath)))
-                    .setMimeType(detectSubtitleMimeType(subPath))
-                    .setLanguage("en")
-                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                    .build()
-                sources.add(
-                    SingleSampleMediaSource.Factory(dataFactory)
-                        .createMediaSource(subConfig, C.TIME_UNSET),
+                builder.setSubtitleConfigurations(
+                    listOf(
+                        MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(File(subPath)))
+                            .setMimeType(detectSubtitleMimeType(subPath))
+                            .setLanguage("en")
+                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                            .build()
+                    )
                 )
             }
-            val finalSource = if (sources.size > 1) {
-                MergingMediaSource(*sources.toTypedArray())
-            } else {
-                sources.first()
-            }
+            val finalSource = DefaultMediaSourceFactory(dataFactory).createMediaSource(builder.build())
             exoPlayer.setMediaSource(finalSource)
             exoPlayer.prepare()
             if (state.targetSeekPositionMs > 0L) exoPlayer.seekTo(state.targetSeekPositionMs)
@@ -308,37 +310,33 @@ private fun PlayerScreen(
                 referer = source.referer,
                 origin = source.origin,
             )
-            val videoItem = MediaItem.fromUri(source.url.toUri())
-            val videoSource = if (source.isHls) {
-                HlsMediaSource.Factory(dataFactory).createMediaSource(videoItem)
-            } else {
-                ProgressiveMediaSource.Factory(dataFactory).createMediaSource(videoItem)
+            val builder = MediaItem.Builder().setUri(source.url.toUri())
+            if (source.isHls) {
+                builder.setMimeType(MimeTypes.APPLICATION_M3U8)
             }
-            val sources = mutableListOf<MediaSource>(videoSource)
-            source.audioUrl?.takeIf { it.isNotBlank() }?.let { audioUrl ->
+            source.subtitleUrl?.takeIf { it.isNotBlank() }?.let { subUrl ->
+                builder.setSubtitleConfigurations(
+                    listOf(
+                        MediaItem.SubtitleConfiguration.Builder(subUrl.toUri())
+                            .setMimeType(detectSubtitleMimeType(subUrl))
+                            .setLanguage("en")
+                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                            .build()
+                    )
+                )
+            }
+            val videoSource = DefaultMediaSourceFactory(dataFactory).createMediaSource(builder.build())
+            val finalSource = if (!source.audioUrl.isNullOrBlank()) {
+                val audioUrl = source.audioUrl!!
                 val audioItem = MediaItem.fromUri(audioUrl)
                 val audioSource = if (audioUrl.substringBefore('?').endsWith(".m3u8", true) || source.isHls) {
                     HlsMediaSource.Factory(dataFactory).createMediaSource(audioItem)
                 } else {
                     ProgressiveMediaSource.Factory(dataFactory).createMediaSource(audioItem)
                 }
-                sources.add(audioSource)
-            }
-            source.subtitleUrl?.takeIf { it.isNotBlank() }?.let { subUrl ->
-                val subConfig = MediaItem.SubtitleConfiguration.Builder(subUrl.toUri())
-                    .setMimeType(detectSubtitleMimeType(subUrl))
-                    .setLanguage("en")
-                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                    .build()
-                sources.add(
-                    SingleSampleMediaSource.Factory(dataFactory)
-                        .createMediaSource(subConfig, C.TIME_UNSET),
-                )
-            }
-            val finalSource = if (sources.size > 1) {
-                MergingMediaSource(*sources.toTypedArray())
+                MergingMediaSource(true, true, videoSource, audioSource)
             } else {
-                sources.first()
+                videoSource
             }
             exoPlayer.setMediaSource(finalSource)
             exoPlayer.prepare()
@@ -623,7 +621,7 @@ private fun PlayerScreen(
         }
 
         // Error overlay
-        state.errorMessage?.let { err ->
+        (state.errorMessage ?: playerErrorText)?.let { err ->
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.errorContainer,

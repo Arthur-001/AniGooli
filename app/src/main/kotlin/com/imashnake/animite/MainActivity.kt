@@ -351,15 +351,15 @@ fun MainScreen(
                         ExploreScreen(
                             listState = exploreScrollState,
                             deviceScreenCornerRadius = deviceScreenCornerRadius,
-                            onItemClick = { id, mediaType, provider ->
+                            onItemClick = { id, mediaType, meta ->
                                 navController.navigate(
                                     MediaPage(
                                         id = id,
                                         source = "Search",
                                         mediaType = mediaType.rawValue,
-                                        providerId = provider?.providerId,
-                                        malId = provider?.malId,
-                                        fallbackTitle = provider?.englishTitle ?: provider?.title,
+                                        providerId = meta?.providerId,
+                                        malId = meta?.malId,
+                                        fallbackTitle = meta?.fallbackTitle,
                                     )
                                 )
                             }
@@ -408,15 +408,15 @@ fun MainScreen(
         SearchFrontDrop(
             hasExtraPadding = isNavBarVisible &&
                     LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT,
-            onItemClick = { id, mediaType, provider ->
+            onItemClick = { id, mediaType, meta ->
                 navController.navigate(
                     MediaPage(
                         id = id,
                         source = "Quick Search",
                         mediaType = mediaType.rawValue,
-                        providerId = provider?.providerId,
-                        malId = provider?.malId,
-                        fallbackTitle = provider?.englishTitle ?: provider?.title,
+                        providerId = meta?.providerId,
+                        malId = meta?.malId,
+                        fallbackTitle = meta?.fallbackTitle,
                     )
                 )
             },

@@ -120,7 +120,6 @@ import androidx.compose.ui.util.fastForEachIndexed
 import androidx.compose.ui.util.fastMap
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import com.anigooli.streaming.ProviderAnime
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.type.MediaType
 import com.imashnake.animite.core.resource.Resource
@@ -134,6 +133,7 @@ import com.imashnake.animite.core.ui.component.Paginator
 import com.imashnake.animite.core.ui.component.RejectButton
 import com.imashnake.animite.core.ui.ext.copy
 import com.imashnake.animite.core.ui.ext.horizontalOnly
+import com.imashnake.animite.explore.searchbar.SearchFallbackMeta
 import com.imashnake.animite.media.ext.icon
 import com.imashnake.animite.media.ext.res
 import kotlinx.collections.immutable.ImmutableList
@@ -150,7 +150,7 @@ import com.imashnake.animite.navigation.R as navigationR
 )
 @Composable
 fun ExploreScreen(
-    onItemClick: (Int, MediaType, ProviderAnime?) -> Unit,
+    onItemClick: (Int, MediaType, SearchFallbackMeta?) -> Unit,
     listState: LazyListState,
     deviceScreenCornerRadius: Int,
     modifier: Modifier = Modifier,
@@ -327,7 +327,7 @@ fun ExploreScreen(
                                 onItemClick(
                                     id,
                                     MediaType.valueOf(mediaType),
-                                    viewModel.getProviderEntry(id),
+                                    viewModel.getFallbackMeta(id),
                                 )
                             },
                             pageInfo = explorePage?.data?.info,

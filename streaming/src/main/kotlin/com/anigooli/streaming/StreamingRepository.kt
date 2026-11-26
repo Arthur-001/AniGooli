@@ -38,9 +38,8 @@ class StreamingRepository @Inject constructor(
             runCatching {
                 val trimmed = query.trim()
                 if (trimmed.isEmpty()) return@runCatching emptyList()
-                scriptManager.refreshIfNeeded(force = false)
                 val req = runtime.buildSearchRequest(trimmed)
-                val resp = httpClient.get(req.url, req.headers)
+                val resp = httpClient.get(req.url, req.headers, allowCloudflareBypass = false)
                 runtime.parseSearchResponse(resp.body)
             }
         }

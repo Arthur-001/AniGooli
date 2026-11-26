@@ -3,7 +3,6 @@ package com.imashnake.animite.explore.searchbar
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.anigooli.streaming.ProviderAnime
 import com.imashnake.animite.api.anilist.AnilistSearchRepository
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.sanitize.settings.Prefs
@@ -83,12 +82,16 @@ class SearchViewModel @Inject constructor(
                     ).firstOrNull()?.getOrNull()
                 }.getOrNull().orEmpty()
 
-                val combined = if (mediaType == MediaType.ANIME) {
-                    providerSearchHelper.mergeProviderResults(query, anilistList)
-                } else {
-                    anilistList.toImmutableList()
+                if (anilistList.isNotEmpty()) {
+                    emit(Resource.success(anilistList.toImmutableList()))
                 }
-                emit(Resource.success(combined))
+
+                if (mediaType == MediaType.ANIME) {
+                    val combined = providerSearchHelper.mergeProviderResults(query, anilistList)
+                    emit(Resource.success(combined))
+                } else if (anilistList.isEmpty()) {
+                    emit(Resource.success(persistentListOf()))
+                }
             }
         }
     }
@@ -98,8 +101,8 @@ class SearchViewModel @Inject constructor(
         initialValue = Resource.loading()
     )
 
-    /** Returns provider metadata for [mediaId] when resolved via ani-cli fallback. */
-    fun getProviderEntry(mediaId: Int): ProviderAnime? = providerSearchHelper.getProviderEntry(mediaId)
+    /** Returns fallback metadata for [mediaId] when resolved via ani-cli or Jikan. */
+    fun getFallbackMeta(mediaId: Int): SearchFallbackMeta? = providerSearchHelper.getFallbackMeta(mediaId)
 
     fun setMediaType(mediaType: MediaType) {
         savedStateHandle[Constants.MEDIA_TYPE] = mediaType

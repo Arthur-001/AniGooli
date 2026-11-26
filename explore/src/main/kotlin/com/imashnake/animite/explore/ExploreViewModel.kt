@@ -4,7 +4,6 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
-import com.anigooli.streaming.ProviderAnime
 import com.imashnake.animite.api.anilist.AnilistMediaRepository
 import com.imashnake.animite.api.anilist.sanitize.explore.FilterStrategy
 import com.imashnake.animite.api.anilist.sanitize.media.Media
@@ -20,6 +19,7 @@ import com.imashnake.animite.core.resource.Resource.Companion.asResource
 import com.imashnake.animite.core.ui.Constants
 import com.imashnake.animite.core.ui.component.MediaCardSize
 import com.imashnake.animite.explore.searchbar.ProviderSearchHelper
+import com.imashnake.animite.explore.searchbar.SearchFallbackMeta
 import com.imashnake.animite.navigation.ExploreRoute
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
@@ -300,8 +300,8 @@ class ExploreViewModel @Inject constructor(
         initialValue = Resource.loading()
     )
 
-    /** Returns provider metadata for [mediaId] when resolved via ani-cli fallback. */
-    fun getProviderEntry(mediaId: Int): ProviderAnime? = providerSearchHelper.getProviderEntry(mediaId)
+    /** Returns fallback metadata for [mediaId] when resolved via ani-cli or Jikan. */
+    fun getFallbackMeta(mediaId: Int): SearchFallbackMeta? = providerSearchHelper.getFallbackMeta(mediaId)
 
     fun setMediaSort(sort: Media.Sort) {
         savedStateHandle[Constants.SORT] = sort
