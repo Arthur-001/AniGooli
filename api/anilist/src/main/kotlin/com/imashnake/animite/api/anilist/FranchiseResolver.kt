@@ -18,6 +18,18 @@ private const val UNKNOWN_YEAR = 9999
 private const val UNKNOWN_MONTH = 13
 private const val UNKNOWN_DAY = 32
 
+private val franchiseRelations = setOf(
+    Media.Relation.PREQUEL,
+    Media.Relation.SEQUEL,
+    Media.Relation.PARENT,
+    Media.Relation.SIDE_STORY,
+    Media.Relation.SUMMARY,
+    Media.Relation.ALTERNATIVE,
+    Media.Relation.SPIN_OFF,
+    Media.Relation.ADAPTATION,
+    Media.Relation.SOURCE,
+)
+
 /** Graph node holding a media summary and its outgoing AniList relation edges. */
 data class FranchiseNode(
     /** Sanitized media summary. */
@@ -75,7 +87,9 @@ object FranchiseOrganizer {
         nodesById.values.forEach { node ->
             allNodes.putIfAbsent(node.media.id, node)
             node.edges.forEach { (rel, target) ->
-                allNodes.putIfAbsent(target.id, FranchiseNode(media = target, relationType = rel))
+                if (rel in franchiseRelations && target.format != Media.Format.MUSIC) {
+                    allNodes.putIfAbsent(target.id, FranchiseNode(media = target, relationType = rel))
+                }
             }
         }
 
@@ -204,6 +218,7 @@ class FranchiseResolver(
         Media.Relation.SEQUEL,
         Media.Relation.PARENT,
         Media.Relation.SOURCE,
+        Media.Relation.SIDE_STORY,
     )
 
     /** Resolves and organizes the complete franchise for [rootMedia]. */
@@ -247,7 +262,8 @@ class FranchiseResolver(
         var frontier = rootMedia.relations
             .filter { (rel, target) ->
                 target.id != rootMedia.id &&
-                    (rel in expansionRelations || target.type == Media.Small.Type.ANIME)
+                    rel in franchiseRelations &&
+                    target.format != Media.Format.MUSIC
             }
             .map { it.second.id }
             .distinct()
@@ -263,7 +279,10 @@ class FranchiseResolver(
             for (node in fetchedNodes) {
                 collected[node.media.id] = node
                 for ((rel, target) in node.edges) {
-                    if (target.id !in collected && rel in expansionRelations) {
+                    if (target.id !in collected &&
+                        rel in expansionRelations &&
+                        target.format != Media.Format.MUSIC
+                    ) {
                         nextFrontier.add(target.id)
                     }
                 }

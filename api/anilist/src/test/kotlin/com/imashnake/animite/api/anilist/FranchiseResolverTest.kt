@@ -56,4 +56,30 @@ class FranchiseResolverTest {
         val newestFirst = FranchiseOrganizer.organize(rootMedia = s2, nodesById = graph, mangaNewestFirst = true)
         assertEquals(listOf(60, 50), newestFirst.mangas.map { it.media.id })
     }
+
+    @Test
+    fun `excludes OTHER, CHARACTER, CONTAINS, and MUSIC bridge edges from franchise sections`() {
+        val apothecary = mediaNode(195516, Media.Small.Type.ANIME, Media.Format.TV, "Apothecary Diaries S3", 2026)
+        val chainsawMan = mediaNode(127230, Media.Small.Type.ANIME, Media.Format.TV, "Chainsaw Man", 2022)
+        val cameoAnime = mediaNode(99901, Media.Small.Type.ANIME, Media.Format.TV, "Cameo Show", 2024)
+        val anthologyShort = mediaNode(99902, Media.Small.Type.ANIME, Media.Format.MOVIE, "Anthology Short", 2023)
+        val musicVideo = mediaNode(218387, Media.Small.Type.ANIME, Media.Format.MUSIC, "AIYOU", 2026)
+
+        val graph = mapOf(
+            195516 to FranchiseNode(
+                apothecary,
+                edges = listOf(
+                    Media.Relation.OTHER to musicVideo,
+                    Media.Relation.OTHER to chainsawMan,
+                    Media.Relation.CHARACTER to cameoAnime,
+                    Media.Relation.CONTAINS to anthologyShort,
+                ),
+            ),
+        )
+
+        val organized = FranchiseOrganizer.organize(rootMedia = apothecary, nodesById = graph, mangaNewestFirst = false)
+        assertEquals(listOf(195516), organized.mainSeasonsAndMovies.map { it.media.id })
+        assertTrue(organized.ovasAndSpecials.isEmpty())
+        assertTrue(organized.mangas.isEmpty())
+    }
 }
