@@ -206,6 +206,13 @@ fun MediaPage(
     val source by viewModel.source.collectAsState()
     val listSize by viewModel.listSize.collectAsState()
     val id by viewModel.id.collectAsState()
+    val franchise by viewModel.franchise.collectAsState()
+    val mangaNewestFirst by viewModel.mangaNewestFirst.collectAsState()
+    val isInOfflineList by viewModel.isInOfflineList.collectAsState()
+    val streamingState by viewModel.streamingState.collectAsState()
+    val audioTrack by viewModel.audioTrack.collectAsState()
+    val subtitlesEnabled by viewModel.subtitlesEnabled.collectAsState()
+    val downloadsByEpisode by viewModel.downloadsByEpisode.collectAsState()
 
     var showDetailsSheet by remember { mutableStateOf(false) }
     val detailsSheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
@@ -303,6 +310,35 @@ fun MediaPage(
                                                 )
                                             }
 
+                                            OfflineListActionRow(
+                                                isInOfflineList = isInOfflineList,
+                                                onToggleOfflineList = viewModel::toggleOfflineList,
+                                                modifier = Modifier
+                                                    .skipToLookaheadSize()
+                                                    .padding(horizontal = LocalPaddings.current.large)
+                                                    .padding(horizontalInsets),
+                                            )
+
+                                            if (viewModel.isAnime) {
+                                                MediaStreamingSection(
+                                                    streamingState = streamingState,
+                                                    audioTrack = audioTrack,
+                                                    subtitlesEnabled = subtitlesEnabled,
+                                                    downloadsByEpisode = downloadsByEpisode,
+                                                    onSelectAudio = viewModel::setAnimeAudioTrack,
+                                                    onToggleSubtitles = viewModel::setAnimeSubtitlesEnabled,
+                                                    onWatchEpisode = viewModel::watchEpisode,
+                                                    onDownloadEpisode = viewModel::downloadEpisode,
+                                                    onPauseDownload = viewModel::pauseDownload,
+                                                    onResumeDownload = viewModel::resumeDownload,
+                                                    onRetry = viewModel::retryStreamingLookup,
+                                                    modifier = Modifier
+                                                        .skipToLookaheadSize()
+                                                        .padding(horizontal = LocalPaddings.current.large)
+                                                        .padding(horizontalInsets),
+                                                )
+                                            }
+
                                             if (media.rankings.isNotEmpty()) {
                                                 MediaRankings(
                                                     selectedTimeSpanIndex = selectedTimeSpanIndex,
@@ -380,7 +416,26 @@ fun MediaPage(
                                                 )
                                             }
 
-                                            if (media.relations.isNotEmpty()) {
+                                            val currentFranchise = franchise
+                                            if (currentFranchise != null) {
+                                                OrganizedFranchiseSections(
+                                                    franchise = currentFranchise,
+                                                    mangaNewestFirst = mangaNewestFirst,
+                                                    onToggleMangaSort = viewModel::toggleMangaSortOrder,
+                                                    onItemClicked = {
+                                                        onNavigateToMediaItem(
+                                                            MediaPage(
+                                                                id = it.id,
+                                                                source = RELATIONS,
+                                                                mediaType = it.type.name,
+                                                            )
+                                                        )
+                                                    },
+                                                    contentPadding = PaddingValues(
+                                                        horizontal = LocalPaddings.current.large
+                                                    ) + horizontalInsets,
+                                                )
+                                            } else if (media.relations.isNotEmpty()) {
                                                 MediaRelations(
                                                     relations = media.relations,
                                                     onItemClicked = {

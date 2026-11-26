@@ -36,9 +36,9 @@ enum class NavigationBarPaths(
     val icon: @Composable (selected: Boolean, avatar: String?) -> Unit,
     @param:StringRes val labelRes: Int
 ) {
-    Social(
+    Library(
         navigateTo = {
-            it.navigate(SocialRoute) {
+            it.navigate(LibraryRoute) {
                 popUpTo(id = it.graph.findStartDestination().id) {
                     saveState = true
                 }
@@ -46,12 +46,12 @@ enum class NavigationBarPaths(
             }
         },
         matchesDestination = { navBackStackEntry ->
-            navBackStackEntry.destination.hierarchy.any { it.hasRoute(SocialRoute::class) }
+            navBackStackEntry.destination.hierarchy.any { it.hasRoute(LibraryRoute::class) }
         },
         icon = { _, _ ->
-            Icon(ImageVector.vectorResource(R.drawable.social), contentDescription = stringResource(R.string.social))
+            Icon(ImageVector.vectorResource(R.drawable.library), contentDescription = stringResource(R.string.library))
         },
-        labelRes = R.string.social
+        labelRes = R.string.library
     ),
     Explore(
         navigateTo = {

@@ -65,7 +65,7 @@ class ProfileViewModel @Inject constructor(
         flow2 = preferencesRepository.language.filterNotNull(),
         transform = ::Pair
     ).flatMapLatest {
-        userRepository.fetchViewer(useNetwork, Media.Language.valueOf(it.second))
+        userRepository.fetchViewer(useNetwork, Media.Language.safeValueOf(it.second))
     }.asResource().onEach {
         it.data?.let { user ->
             preferencesRepository.setViewerId(user.id)
@@ -100,7 +100,7 @@ class ProfileViewModel @Inject constructor(
             id = it.second.first.toIntOrNull(),
             type = MediaType.ANIME,
             useNetwork = useNetwork,
-            language = Media.Language.valueOf(it.second.second),
+            language = Media.Language.safeValueOf(it.second.second),
             scoreFormat = it.second.third,
             mediaListOrder = it.third,
         )
@@ -127,7 +127,7 @@ class ProfileViewModel @Inject constructor(
             id = it.second.first.toIntOrNull(),
             type = MediaType.MANGA,
             useNetwork = useNetwork,
-            language = Media.Language.valueOf(it.second.second),
+            language = Media.Language.safeValueOf(it.second.second),
             scoreFormat = it.second.third,
             mediaListOrder = it.third
         )

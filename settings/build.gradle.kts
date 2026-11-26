@@ -37,8 +37,12 @@ dependencies {
     implementation(projects.core.ui)
     implementation(projects.banner)
     implementation(projects.media)
+    implementation(projects.streaming)
+    implementation(projects.downloads)
+    implementation(projects.notifications)
 
     // AndroidX
+    implementation(libs.androidx.activityCompose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycleRuntimeKtx)
 

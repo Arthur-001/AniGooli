@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "sha256": "3ea4e64abe468eea807810e6964bc35a256d2b84aec76f26ea3770af264abb99",
+  "scriptUrl": "https://raw.githubusercontent.com/Arthur-001/AniGooli/main/scripts/extractor.js",
+  "upstreamAniCliVersion": "5.2.0",
+  "upstreamScrapeHash": "23d94408d2c0b6e3409066d251376a7a41d80579da1faf7714003b0e28ff7a67",
+  "minAppVersion": 1,
+  "defaultConfig": {
+    "miruroBase": "https://miruro.cx",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  }
+}

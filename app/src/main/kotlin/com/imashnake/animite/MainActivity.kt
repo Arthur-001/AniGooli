@@ -1,15 +1,20 @@
 package com.imashnake.animite
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.RoundedCorner
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.slideInHorizontally
@@ -48,6 +53,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navDeepLink
+import com.anigooli.library.ConflictResolutionScreen
+import com.anigooli.library.GenreManagerScreen
+import com.anigooli.library.LibraryScreen
+import com.anigooli.notifications.ReleaseNotificationHelper
 import com.imashnake.animite.anime.AnimeScreen
 import com.imashnake.animite.core.ui.Density
 import com.imashnake.animite.core.ui.LocalPaddings
@@ -59,7 +68,10 @@ import com.imashnake.animite.theme.manropeFontFamily
 import com.imashnake.animite.manga.MangaScreen
 import com.imashnake.animite.media.MediaPage
 import com.imashnake.animite.navigation.AnimeRoute
+import com.imashnake.animite.navigation.ConflictResolutionRoute
 import com.imashnake.animite.navigation.ExploreRoute
+import com.imashnake.animite.navigation.GenreManagerRoute
+import com.imashnake.animite.navigation.LibraryRoute
 import com.imashnake.animite.navigation.MangaRoute
 import com.imashnake.animite.navigation.NavigationBar
 import com.imashnake.animite.navigation.NavigationBarPaths
@@ -74,6 +86,7 @@ import com.imashnake.animite.settings.SettingsViewModel
 import com.imashnake.animite.settings.Theme
 import com.imashnake.animite.social.SocialScreen
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 private const val TAG = "MainActivity"
@@ -82,10 +95,12 @@ private const val TAG = "MainActivity"
 class MainActivity : ComponentActivity() {
     private val settingsViewModel: SettingsViewModel by viewModels()
     private val profileViewModel: ProfileViewModel by viewModels()
+    private val pendingNotificationMedia = MutableStateFlow<Pair<Int, String>?>(null)
     var showSplashScreen = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        extractNotificationTarget(intent)
 
         installSplashScreen().setKeepOnScreenCondition { showSplashScreen }
         enableEdgeToEdge()
@@ -99,6 +114,31 @@ class MainActivity : ComponentActivity() {
                 }
                 showSplashScreen = false
             }
+
+            val hasRequestedNotif by settingsViewModel.hasRequestedNotificationPermission
+                .collectAsStateWithLifecycle(initialValue = true)
+            val notifPermissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                settingsViewModel.markNotificationPermissionRequested()
+                settingsViewModel.setNotificationsEnabled(granted)
+            }
+            LaunchedEffect(hasRequestedNotif) {
+                if (!hasRequestedNotif && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val alreadyGranted = ContextCompat.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (alreadyGranted) {
+                        settingsViewModel.markNotificationPermissionRequested()
+                        settingsViewModel.setNotificationsEnabled(true)
+                    } else {
+                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
+
+            val notificationTarget by pendingNotificationMedia.collectAsStateWithLifecycle()
 
             val theme by settingsViewModel.theme.collectAsState(initial = Theme.DEVICE_THEME.name)
             val useSystemColorScheme by settingsViewModel.useSystemColorScheme.collectAsState(initial = false)
@@ -129,11 +169,26 @@ class MainActivity : ComponentActivity() {
                     isAmoled = isAmoled,
                     avatar = avatar,
                     showUserDescription = showUserDescription,
+                    pendingNotificationTarget = notificationTarget,
+                    onConsumeNotificationTarget = { pendingNotificationMedia.value = null },
                     modifier = Modifier
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.background)
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        extractNotificationTarget(intent)
+    }
+
+    private fun extractNotificationTarget(intent: Intent?) {
+        val mediaId = intent?.getIntExtra(ReleaseNotificationHelper.EXTRA_MEDIA_ID, -1) ?: -1
+        if (mediaId > 0) {
+            val mediaType = intent?.getStringExtra(ReleaseNotificationHelper.EXTRA_MEDIA_TYPE) ?: "ANIME"
+            pendingNotificationMedia.value = mediaId to mediaType
         }
     }
 
@@ -158,9 +213,24 @@ fun MainScreen(
     isAmoled: Boolean,
     avatar: String?,
     showUserDescription: Boolean,
+    pendingNotificationTarget: Pair<Int, String>? = null,
+    onConsumeNotificationTarget: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val navController = rememberNavController()
+
+    LaunchedEffect(pendingNotificationTarget) {
+        if (pendingNotificationTarget != null) {
+            navController.navigate(
+                MediaPage(
+                    id = pendingNotificationTarget.first,
+                    source = "Notification",
+                    mediaType = pendingNotificationTarget.second,
+                )
+            )
+            onConsumeNotificationTarget()
+        }
+    }
 
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val isNavBarVisible = rememberSaveable(currentBackStackEntry) {
@@ -246,10 +316,34 @@ fun MainScreen(
                         )
                     }
                     composable<SettingsPage> {
-                        SettingsPage(versionName = BuildConfig.VERSION_NAME)
+                        SettingsPage(
+                            versionName = BuildConfig.VERSION_NAME,
+                            onNavigateToSocial = { navController.navigate(SocialRoute) },
+                        )
                     }
                     composable<SocialRoute> {
                         SocialScreen()
+                    }
+                    composable<LibraryRoute> {
+                        LibraryScreen(
+                            onNavigateToMedia = { mediaId ->
+                                navController.navigate(
+                                    MediaPage(
+                                        id = mediaId,
+                                        source = "Library",
+                                        mediaType = "ANIME",
+                                    )
+                                )
+                            },
+                            onNavigateToGenres = { navController.navigate(GenreManagerRoute) },
+                            onNavigateToConflicts = { navController.navigate(ConflictResolutionRoute) },
+                        )
+                    }
+                    composable<GenreManagerRoute> {
+                        GenreManagerScreen(onBack = navController::navigateUp)
+                    }
+                    composable<ConflictResolutionRoute> {
+                        ConflictResolutionScreen(onFinished = navController::navigateUp)
                     }
                     composable<ExploreRoute> {
                         ExploreScreen(
@@ -320,6 +414,8 @@ fun MainScreen(
             },
             isFabVisible = currentBackStackEntry?.destination?.hasRoute<SettingsPage>() == false
                     && currentBackStackEntry?.destination?.hasRoute<ExploreRoute>() == false
+                    && currentBackStackEntry?.destination?.hasRoute<GenreManagerRoute>() == false
+                    && currentBackStackEntry?.destination?.hasRoute<ConflictResolutionRoute>() == false
                     && zoomableMediaImage == null,
             modifier = Modifier
                 .align(Alignment.BottomEnd)

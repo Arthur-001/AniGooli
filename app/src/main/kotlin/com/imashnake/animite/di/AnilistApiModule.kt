@@ -4,6 +4,7 @@ import com.apollographql.apollo.ApolloClient
 import com.imashnake.animite.api.anilist.AnilistMediaRepository
 import com.imashnake.animite.api.anilist.AnilistSearchRepository
 import com.imashnake.animite.api.anilist.AnilistUserRepository
+import com.imashnake.animite.api.anilist.FranchiseResolver
 import com.imashnake.animite.api.anilist.createApolloHttpClient
 import com.imashnake.animite.api.anilist.createAuthenticatedApolloHttpClient
 import com.imashnake.animite.api.preferences.PreferencesRepository
@@ -48,6 +49,12 @@ object AnilistApiModule {
     @Singleton
     fun provideAnilistUserRepository(@AuthorizedClient client: ApolloClient): AnilistUserRepository {
         return AnilistUserRepository(client)
+    }
+
+    @Provides
+    @Singleton
+    fun provideFranchiseResolver(client: ApolloClient): FranchiseResolver {
+        return FranchiseResolver(client)
     }
 }
 

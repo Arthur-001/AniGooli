@@ -112,10 +112,10 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.serialization.Serializable
 
 private const val DISCORD_URL = "https://discord.gg/HEB7duYdqe"
-private const val GITHUB_URL = "https://github.com/imashnake0/Animite/"
+private const val GITHUB_URL = "https://github.com/Arthur-001/AniGooli"
 private const val PRIVACY_POLICY = "https://imashnake.imashnake0.deno.net/animite.html"
 private const val SYSTEM_DAY_PART = "SYSTEM"
-private const val ANIMITE = "Animite"
+private const val ANIMITE = "AniGooli"
 
 // TODO: What a hodgepodge, do something.
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
@@ -126,6 +126,7 @@ fun SettingsPage(
     contentWindowInsets: WindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
     timeContext: TimeContext = LocalTimeContext.current,
     viewModel: SettingsViewModel = hiltViewModel(),
+    onNavigateToSocial: () -> Unit = {},
 ) {
     val insetPaddingValues = contentWindowInsets.asPaddingValues()
     val horizontalInsets = insetPaddingValues.horizontalOnly
@@ -141,7 +142,8 @@ fun SettingsPage(
     val selectedDensity by viewModel.density.collectAsState(initial = Density.COMFY.name)
 
     val isNsfwEnabled by viewModel.isNsfwEnabled.collectAsState(initial = false)
-    val selectedLanguage by viewModel.language.collectAsState(initial = Media.Language.DEFAULT.name)
+    val rawSelectedLanguage by viewModel.language.collectAsState(initial = Media.Language.ENGLISH.name)
+    val selectedLanguage = Media.Language.safeValueOf(rawSelectedLanguage).name
     val listSize by viewModel.listSize.collectAsState(initial = 10)
 
     val animeLists by viewModel.animeList.collectAsState(initial = persistentListOf())
@@ -468,7 +470,7 @@ fun SettingsPage(
                                             ButtonGroupDefaults.ConnectedSpaceBetween
                                         )
                                     ) {
-                                        Media.Language.entries.fastForEach { language ->
+                                        Media.Language.selectableEntries.fastForEach { language ->
                                             ToggleButton(
                                                 checked = selectedLanguage == language.name,
                                                 onCheckedChange = {
@@ -476,8 +478,8 @@ fun SettingsPage(
                                                     haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
                                                 },
                                                 shapes = when (language) {
-                                                    Media.Language.ROMAJI -> ButtonGroupDefaults.connectedLeadingButtonShapes()
-                                                    Media.Language.DEFAULT -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                                                    Media.Language.ENGLISH -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                                                    Media.Language.ROMAJI -> ButtonGroupDefaults.connectedTrailingButtonShapes()
                                                     else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
                                                 },
                                                 colors = ToggleButtonDefaults.toggleButtonColors(
@@ -485,7 +487,11 @@ fun SettingsPage(
                                                 ),
                                                 modifier = Modifier.weight(1f)
                                             ) {
-                                                Text(stringResource(language.res))
+                                                Text(
+                                                    text = stringResource(language.res),
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
                                             }
                                         }
                                     }
@@ -826,6 +832,12 @@ fun SettingsPage(
                             }
                         }
                     }
+
+                    AniGooliSettingsSections(
+                        viewModel = viewModel,
+                        isDarkMode = isDarkMode,
+                        onNavigateToSocial = onNavigateToSocial,
+                    )
 
                     Column(verticalArrangement = Arrangement.spacedBy(LocalPaddings.current.medium)) {
                         Text(

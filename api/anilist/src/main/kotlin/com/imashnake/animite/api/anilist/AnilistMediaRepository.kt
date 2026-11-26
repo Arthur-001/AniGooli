@@ -111,7 +111,7 @@ class AnilistMediaRepository(
         id: Int?,
         mediaType: MediaType,
         perPage: Int = 10,
-        language: Media.Language = Media.Language.DEFAULT,
+        language: Media.Language = Media.Language.ENGLISH,
     ): Flow<Result<Media>> {
         return apolloClient.query(
             MediaQuery(

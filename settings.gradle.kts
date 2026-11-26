@@ -34,7 +34,7 @@ plugins {
     id("com.android.settings") version "9.4.0"
 }
 
-rootProject.name = "Animite"
+rootProject.name = "AniGooli"
 include(
     ":anime",
     ":api:anilist",
@@ -45,13 +45,18 @@ include(
     ":core:model",
     ":core:resource",
     ":core:ui",
+    ":downloads",
+    ":explore",
+    ":library",
     ":manga",
     ":media",
     ":navigation",
+    ":notifications",
+    ":player",
     ":profile",
     ":settings",
     ":social",
-    ":explore"
+    ":streaming"
 )
 
 android {

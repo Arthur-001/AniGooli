@@ -17,6 +17,15 @@ data class ProfileRoute(
 data object SocialRoute
 
 @Serializable
+data object LibraryRoute
+
+@Serializable
+data object GenreManagerRoute
+
+@Serializable
+data object ConflictResolutionRoute
+
+@Serializable
 data class ExploreRoute(
     val mediaType: String? = null,
     val sortName: String? = null,

@@ -11,17 +11,22 @@ plugins {
 
 android {
     defaultConfig {
-        applicationId = "com.imashnake.animite"
-        versionCode = 62
-        versionName = "0.7.15-alpha01"
+        applicationId = "com.anigooli.app"
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
+    val releaseStorePath = project.findProperty("storeFilePath")?.toString()?.takeIf { it.isNotBlank() }
+    val hasReleaseKeystore = releaseStorePath != null && file(releaseStorePath).exists()
+
     signingConfigs {
-        register("release") {
-            storeFile = project.findProperty("storeFilePath")?.let { file(it) }
-            storePassword = project.findProperty("storePass").toString()
-            keyAlias = project.findProperty("key").toString()
-            keyPassword = project.findProperty("keyPass").toString()
+        if (hasReleaseKeystore) {
+            register("release") {
+                storeFile = file(releaseStorePath!!)
+                storePassword = project.findProperty("storePass")?.toString().orEmpty()
+                keyAlias = project.findProperty("key")?.toString().orEmpty()
+                keyPassword = project.findProperty("keyPass")?.toString().orEmpty()
+            }
         }
     }
 
@@ -30,7 +35,7 @@ android {
             optimization { enable = true }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName(
-                if (System.getenv("Animite") == "true") "release" else "debug"
+                if (hasReleaseKeystore) "release" else "debug"
             )
         }
     }
@@ -77,6 +82,11 @@ dependencies {
     implementation(projects.anime)
     implementation(projects.manga)
     implementation(projects.explore)
+    implementation(projects.streaming)
+    implementation(projects.player)
+    implementation(projects.downloads)
+    implementation(projects.library)
+    implementation(projects.notifications)
 
     // AndroidX
     implementation(libs.androidx.activityCompose)
@@ -84,6 +94,14 @@ dependencies {
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycleRuntimeKtx)
     implementation(libs.androidx.navigationCompose)
+    implementation(libs.androidx.work.runtimeKtx)
+
+    // Hilt
+    implementation(libs.hilt.android)
+    implementation(libs.hilt.navigationCompose)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.hilt.android.compiler)
+    ksp(libs.androidx.hilt.compiler)
 
     // Compose
     implementation(libs.bundles.compose)
@@ -102,11 +120,6 @@ dependencies {
     implementation(libs.kotlinx.datetime)
     implementation(libs.kotlinx.serialization.core)
     implementation(libs.kotlinx.collectionsImmutable)
-
-    // Hilt
-    implementation(libs.hilt.android)
-    implementation(libs.hilt.navigationCompose)
-    ksp(libs.hilt.android.compiler)
 
     implementation(libs.materialKolor)
 

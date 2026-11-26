@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="downloads_channel_name">Episode Downloads</string>
+    <string name="downloads_empty">No downloaded or active episodes yet</string>
+    <string name="downloads_delete_anime">Delete all episodes</string>
+    <string name="downloads_delete_episode">Delete episode</string>
+</resources>

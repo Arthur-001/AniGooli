@@ -1,0 +1,15 @@
+query MediaFranchiseBatchQuery($ids: [Int]) {
+    page: Page(page: 1, perPage: 50) {
+        media(id_in: $ids) {
+            ...MediaSmall
+            relations {
+                edges {
+                    relationType(version: 2)
+                    node {
+                        ...MediaSmall
+                    }
+                }
+            }
+        }
+    }
+}

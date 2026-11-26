@@ -40,7 +40,7 @@ class SearchViewModel @Inject constructor(
         flow2 = preferencesRepository.language.filterNotNull(),
         flow3 = preferencesRepository.listSize.filterNotNull(),
         transform = { isNsfwEnabled, language, listSize ->
-            Prefs(isNsfwEnabled, Media.Language.valueOf(language), listSize)
+            Prefs(isNsfwEnabled, Media.Language.safeValueOf(language), listSize)
         }
     )
 

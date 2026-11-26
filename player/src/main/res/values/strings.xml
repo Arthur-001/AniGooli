@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_mpv_missing">MPV app (is.xyz.mpv) is not installed</string>
+</resources>

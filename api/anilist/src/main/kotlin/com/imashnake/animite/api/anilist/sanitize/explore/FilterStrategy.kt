@@ -24,5 +24,5 @@ data class FilterStrategy(
     val search: String? = null,
     val isAdult: Boolean = false,
     val isNsfwEnabled: Boolean = false,
-    val language: Media.Language = Media.Language.DEFAULT,
+    val language: Media.Language = Media.Language.ENGLISH,
 )

@@ -1,43 +1,20 @@
-![brah](https://github.com/user-attachments/assets/990fc6f0-2671-4b73-b7c9-ab4d1c35a0fe)
+# AniGooli [![Build APKs](https://github.com/Arthur-001/AniGooli/actions/workflows/build-apk.yaml/badge.svg)](https://github.com/Arthur-001/AniGooli/actions/workflows/build-apk.yaml)
 
-# Animite [![build-debug](https://github.com/imashnake0/Animite/actions/workflows/build-debug.yaml/badge.svg)](https://github.com/imashnake0/Animite/actions/workflows/build-debug.yaml) <a href="https://play.google.com/store/apps/details?id=com.imashnake.animite"><img src="resources/google-play-assistive-chip-dark.svg" alt="Google Play Store Chip" height="35px" align="right"></a><a href="https://discord.gg/HEB7duYdqe"><picture><source media="(prefers-color-scheme: dark)" srcset="resources/discord-assistive-chip-dark.svg"><img src="resources/discord-assistive-chip-light.svg" alt="Discord Chip" height="35px" align="right"></picture></a>
+**AniGooli** is a native, lightweight Android anime client combining **[Animite](https://github.com/imashnake0/Animite)** (Material 3 AniList/MAL client) with **[ani-cli](https://github.com/pystardust/ani-cli)** streaming and offline downloads.
 
-[Animite](https://github.com/users/imashnake0/projects/1) is an unofficial Android (and potentially iOS) client for [AniList](https://anilist.co/) (and potentially [MAL](https://myanimelist.net/)).
+## Features
+- **Self-Updating Streaming Engine**: Executes a remote `ani-cli` extractor script inside Android's sandboxed `JavaScriptEngine` and tracks upstream `pystardust/ani-cli` daily via GitHub Actions — updating streaming sources without rebuilding the APK.
+- **Pro Touch-Responsive Player + MPV**: Media3 ExoPlayer with horizontal scrub-seek, left-side brightness drag, right-side volume drag, double-tap ±10s, 2x long-press, pinch-to-zoom, resolution selector (`1080p` default with highest-available fallback), **Japanese (EN Sub ON)** & **English Dub** with per-anime audio/subtitle memory, and one-tap **Open in External MPV**.
+- **Smart Single-Video Pre-Buffering & Native Downloads**: Single-slot disk-backed pre-buffering (`500 MB` – `4 GB`, default `1 GB`) with crash-safe memory bounds; downloading reuses already pre-buffered segments/ranges without re-downloading. Manage and delete downloaded episodes under **Library → Downloads**.
+- **Offline Personal Anime List**: Add anime from AniList or create custom manual entries, manage custom & default genres (CRUD), switch 2/3/4 column card views (all preferences persisted), and export/restore fault-tolerant JSON/MAL/AniList backups with interactive per-item conflict resolution (`Keep`, `Skip`, `Keep All`, `Discard All`).
+- **Ordered Franchise Relations**: Multi-hop chronological **Main Seasons & Movies**, separate **OVAs & Specials**, and separate **Mangas** with persisted **Oldest ↔ Newest** sorting.
+- **Release Notifications**: Background checks for new episodes, seasons, movies, OVAs, and mangas for anime in your offline list or watch history.
+- **Title Language**: Defaults to **English**, with **Japanese** and **Japanese-English (Romaji)** options in Settings.
 
-## Stack
-The app tries to make use of the latest libraries and APIs:
-- **Architecture:** [MVVM](https://developer.android.com/topic/architecture).
-- **Networking:** [Apollo Kotlin](https://github.com/apollographql/apollo-kotlin), [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines), and [COIL](https://coil-kt.github.io/coil/).
-- **UI/UX:** Made purely with [Jetpack Compose](https://developer.android.com/jetpack/compose); assets using [Figma](https://www.figma.com/).
-- **Dependency Injection:** [Hilt](https://developer.android.com/training/dependency-injection/hilt-android).
-- **Gradle:** [Version catalogs](https://docs.gradle.org/current/userguide/platforms.html).
+## Downloading APKs (Cloud-Built on GitHub Actions)
+1. Open the **[Actions](https://github.com/Arthur-001/AniGooli/actions/workflows/build-apk.yaml)** tab and select the latest green run, or download from **[Releases](https://github.com/Arthur-001/AniGooli/releases)**.
+2. Download `anigooli-debug-apk` or `anigooli-release-apk` and install on Android 10+ (`minSdk 29`).
 
-### Architecture
-At the moment, the app uses [Google's choice for app architecture](https://developer.android.com/topic/architecture), MVVM, since I don't know any better.
-
-## Shoutouts
-Some apps that I referred to while developing:
-- [AniHyou](https://github.com/axiel7/AniHyou-android)
-- [Katana](https://github.com/alvr/katana)
-- [AniTrend](https://github.com/AniTrend/anitrend-v2)
-
-Libraries:
-- Compose Markdown: [boswelja/compose-markdown](https://github.com/boswelja/compose-markdown), [mikepenz/markdown-renderer](https://github.com/mikepenz/multiplatform-markdown-renderer)
-- [MaterialKolor](https://github.com/jordond/MaterialKolor)
-
-## [License](https://github.com/imashnake0/Animite/blob/15eaac4a80c1e6eef3a4d6c861cab05670fb174b/LICENSE.txt)
-```
-Copyright 2022 imashnake0
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
+## Credits & License
+- Built atop **[imashnake0/Animite](https://github.com/imashnake0/Animite)** (Apache License 2.0 — see [LICENSE.txt](LICENSE.txt)).
+- Streaming scraping logic adapted from **[pystardust/ani-cli](https://github.com/pystardust/ani-cli)** (GPL-3.0 upstream reference).

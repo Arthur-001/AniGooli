@@ -55,6 +55,22 @@ data class Media(
     val color: String,
     /** @see MediaQuery.Media.title */
     val title: String?,
+    /** Raw English title from AniList. */
+    val englishTitle: String? = null,
+    /** Raw Romaji title from AniList. */
+    val romajiTitle: String? = null,
+    /** Raw Native title from AniList. */
+    val nativeTitle: String? = null,
+    /** Primary media format (TV, MOVIE, OVA, MANGA, etc.). */
+    val mediaFormat: Format? = null,
+    /** Total episode count when available. */
+    val totalEpisodes: Int? = null,
+    /** Release start year when available. */
+    val startYear: Int? = null,
+    /** Release start month (1..12) when available. */
+    val startMonth: Int? = null,
+    /** Release start day (1..31) when available. */
+    val startDay: Int? = null,
     val otherTitles: ImmutableList<String>,
     /** @see MediaQuery.Media.description */
     val description: String,
@@ -244,6 +260,25 @@ data class Media(
                 )
             }.toImmutableList()
         }
+
+        /** Resolves the display title for a given [language] with English/Romaji/Native fallback. */
+        fun resolveTitle(
+            english: String?,
+            nativeTitle: String?,
+            romaji: String?,
+            userPreferred: String?,
+            language: Language,
+        ): String? {
+            val eng = english?.takeIf { it.isNotBlank() }
+            val nat = nativeTitle?.takeIf { it.isNotBlank() }
+            val rom = romaji?.takeIf { it.isNotBlank() }
+            val pref = userPreferred?.takeIf { it.isNotBlank() }
+            return when (language) {
+                Language.ENGLISH, Language.DEFAULT -> eng ?: rom ?: nat ?: pref
+                Language.NATIVE -> nat ?: rom ?: eng ?: pref
+                Language.ROMAJI -> rom ?: eng ?: nat ?: pref
+            }
+        }
     }
 
     enum class Format {
@@ -398,10 +433,23 @@ data class Media(
     }
 
     enum class Language {
-        ROMAJI,
         ENGLISH,
         NATIVE,
-        DEFAULT,
+        ROMAJI,
+        DEFAULT;
+
+        companion object {
+            /** The three title language choices shown in AniGooli settings. */
+            val selectableEntries: List<Language> = listOf(ENGLISH, NATIVE, ROMAJI)
+
+            /** Parses a stored preference value, mapping legacy DEFAULT or unknown values to ENGLISH. */
+            fun safeValueOf(raw: String?): Language = when (raw) {
+                ROMAJI.name -> ROMAJI
+                NATIVE.name -> NATIVE
+                ENGLISH.name, DEFAULT.name, null -> ENGLISH
+                else -> ENGLISH
+            }
+        }
     }
 
     @Immutable
@@ -597,12 +645,21 @@ data class Media(
         bannerImage = query.bannerImage,
         coverImage = query.coverImage?.extraLarge ?: query.coverImage?.large ?: query.coverImage?.medium,
         color = query.coverImage?.color ?: "#00000000",
-        title = when (language) {
-            Language.DEFAULT -> query.title?.userPreferred
-            Language.ROMAJI -> query.title?.romaji
-            Language.ENGLISH -> query.title?.english
-            Language.NATIVE -> query.title?.native
-        } ?: query.title?.userPreferred,
+        title = resolveTitle(
+            english = query.title?.english,
+            nativeTitle = query.title?.native,
+            romaji = query.title?.romaji,
+            userPreferred = query.title?.userPreferred,
+            language = language,
+        ),
+        englishTitle = query.title?.english,
+        romajiTitle = query.title?.romaji,
+        nativeTitle = query.title?.native,
+        mediaFormat = query.animeInfo.format?.sanitize(),
+        totalEpisodes = query.animeInfo.episodes,
+        startYear = query.animeInfo.startDate?.year,
+        startMonth = query.animeInfo.startDate?.month,
+        startDay = query.animeInfo.startDate?.day,
         otherTitles = listOfNotNull(
             query.title?.romaji,
             query.title?.english,
@@ -667,7 +724,25 @@ data class Media(
         /** @see MediaSmall.title */
         val title: String?,
         /** @see MediaSmall.coverImage */
-        val coverImage: String?
+        val coverImage: String?,
+        /** @see MediaSmall.format */
+        val format: Format? = null,
+        /** @see MediaSmall.episodes */
+        val episodes: Int? = null,
+        /** @see MediaSmall.seasonYear */
+        val seasonYear: Int? = null,
+        /** @see MediaSmall.startDate */
+        val startYear: Int? = null,
+        /** @see MediaSmall.startDate */
+        val startMonth: Int? = null,
+        /** @see MediaSmall.startDate */
+        val startDay: Int? = null,
+        /** Raw English title for matching/offline persistence. */
+        val englishTitle: String? = null,
+        /** Raw Romaji title for matching/offline persistence. */
+        val romajiTitle: String? = null,
+        /** Raw Native title for matching/offline persistence. */
+        val nativeTitle: String? = null,
     ) {
         /** @see MediaSmall.type */
         enum class Type(val type: String) {
@@ -683,12 +758,22 @@ data class Media(
             id = query.id,
             type = query.type?.name?.let { Type.valueOf(it) } ?: Type.UNKNOWN,
             coverImage = query.coverImage?.extraLarge ?: query.coverImage?.large,
-            title = when (language) {
-                Language.DEFAULT -> query.title?.userPreferred
-                Language.ROMAJI -> query.title?.romaji
-                Language.ENGLISH -> query.title?.english
-                Language.NATIVE -> query.title?.native
-            } ?: query.title?.userPreferred
+            title = resolveTitle(
+                english = query.title?.english,
+                nativeTitle = query.title?.native,
+                romaji = query.title?.romaji,
+                userPreferred = query.title?.userPreferred,
+                language = language,
+            ),
+            format = query.format?.sanitize(),
+            episodes = query.episodes,
+            seasonYear = query.seasonYear,
+            startYear = query.startDate?.year,
+            startMonth = query.startDate?.month,
+            startDay = query.startDate?.day,
+            englishTitle = query.title?.english,
+            romajiTitle = query.title?.romaji,
+            nativeTitle = query.title?.native,
         )
     }
 
@@ -717,12 +802,13 @@ data class Media(
         ) : this(
             id = query.id,
             coverImage = query.coverImage?.extraLarge,
-            title = when (language) {
-                Language.DEFAULT -> query.title?.userPreferred
-                Language.ROMAJI -> query.title?.romaji
-                Language.ENGLISH -> query.title?.english
-                Language.NATIVE -> query.title?.native
-            } ?: query.title?.userPreferred,
+            title = resolveTitle(
+                english = query.title?.english,
+                nativeTitle = query.title?.native,
+                romaji = query.title?.romaji,
+                userPreferred = query.title?.userPreferred,
+                language = language,
+            ),
             season = query.season?.sanitize(),
             seasonYear = query.seasonYear,
             studios = query.studios?.nodes
@@ -767,12 +853,13 @@ data class Media(
             coverImage = query.coverImage?.large,
             bannerImage = query.bannerImage,
             color = query.coverImage?.color,
-            title = when (language) {
-                Language.DEFAULT -> query.title?.userPreferred
-                Language.ROMAJI -> query.title?.romaji
-                Language.ENGLISH -> query.title?.english
-                Language.NATIVE -> query.title?.native
-            } ?: query.title?.userPreferred,
+            title = resolveTitle(
+                english = query.title?.english,
+                nativeTitle = query.title?.native,
+                romaji = query.title?.romaji,
+                userPreferred = query.title?.userPreferred,
+                language = language,
+            ),
             season = query.season?.sanitize(),
             seasonYear = query.seasonYear,
             format = query.format?.sanitize(),

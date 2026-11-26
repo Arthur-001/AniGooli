@@ -2,9 +2,17 @@ package com.imashnake.animite.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.anigooli.downloads.PreBufferManager
+import com.anigooli.notifications.ReleaseScheduler
+import com.anigooli.streaming.ExtractorStatus
+import com.anigooli.streaming.StreamingRepository
 import com.imashnake.animite.api.anilist.AnilistUserRepository
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.type.ScoreFormat
+import com.imashnake.animite.api.preferences.AUDIO_TRACK_JAPANESE
+import com.imashnake.animite.api.preferences.DEFAULT_PRE_BUFFER_MB
+import com.imashnake.animite.api.preferences.DEFAULT_STREAM_QUALITY
+import com.imashnake.animite.api.preferences.PLAYER_IN_APP
 import com.imashnake.animite.api.preferences.PreferencesRepository
 import com.imashnake.animite.core.model.AnimeList
 import com.imashnake.animite.core.model.MangaList
@@ -13,6 +21,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -20,9 +30,13 @@ import javax.inject.Inject
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
+@Suppress("TooManyFunctions")
 class SettingsViewModel @Inject constructor(
     private val userRepository: AnilistUserRepository,
     private val preferencesRepository: PreferencesRepository,
+    private val streamingRepository: StreamingRepository,
+    private val preBufferManager: PreBufferManager,
+    private val releaseScheduler: ReleaseScheduler,
 ) : ViewModel() {
 
     val isLoggedIn = preferencesRepository
@@ -69,6 +83,34 @@ class SettingsViewModel @Inject constructor(
     val useExpressiveProgressIndicator = preferencesRepository.useExpressiveProgressIndicator.filterNotNull()
     val profileColor = preferencesRepository.profileColor.filterNotNull()
     val scoreFormat = preferencesRepository.scoreFormat.filterNotNull()
+
+    val defaultStreamQuality = preferencesRepository.defaultStreamQuality.map { it ?: DEFAULT_STREAM_QUALITY }
+    val defaultAudioTrack = preferencesRepository.defaultAudioTrack.map { it ?: AUDIO_TRACK_JAPANESE }
+    val defaultSubtitlesEnabled = preferencesRepository.defaultSubtitlesEnabled.map { it ?: true }
+    val preferredPlayer = preferencesRepository.preferredPlayer.map { it ?: PLAYER_IN_APP }
+    val preBufferMaxMb = preferencesRepository.preBufferMaxMb.map { it ?: DEFAULT_PRE_BUFFER_MB }
+    val extractorAutoUpdateEnabled = preferencesRepository.extractorAutoUpdateEnabled.map { it ?: true }
+    val notificationsEnabled = preferencesRepository.notificationsEnabled.map { it ?: true }
+    val hasRequestedNotificationPermission =
+        preferencesRepository.hasRequestedNotificationPermission.map { it ?: false }
+    val notifyEpisodes = preferencesRepository.notifyEpisodes.map { it ?: true }
+    val notifySeasonsMovies = preferencesRepository.notifySeasonsMovies.map { it ?: true }
+    val notifyOvas = preferencesRepository.notifyOvas.map { it ?: true }
+    val notifyMangas = preferencesRepository.notifyMangas.map { it ?: true }
+
+    private val _extractorStatus = MutableStateFlow<ExtractorStatus?>(null)
+    val extractorStatus = _extractorStatus.asStateFlow()
+
+    private val _isUpdatingExtractor = MutableStateFlow(false)
+    val isUpdatingExtractor = _isUpdatingExtractor.asStateFlow()
+
+    private val _preBufferCacheBytes = MutableStateFlow(0L)
+    val preBufferCacheBytes = _preBufferCacheBytes.asStateFlow()
+
+    init {
+        refreshExtractorStatus()
+        refreshCacheSize()
+    }
 
     fun updateProfileColor(profileColor: String) = viewModelScope.launch(Dispatchers.IO) {
         userRepository.updateUser(profileColor = profileColor).collect {
@@ -151,5 +193,75 @@ class SettingsViewModel @Inject constructor(
 
     fun resetMangaLists() = viewModelScope.launch(Dispatchers.IO) {
         preferencesRepository.resetMangaLists()
+    }
+
+    fun setDefaultStreamQuality(quality: String) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setDefaultStreamQuality(quality)
+    }
+
+    fun setDefaultAudioTrack(track: String) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setDefaultAudioTrack(track)
+    }
+
+    fun setDefaultSubtitlesEnabled(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setDefaultSubtitlesEnabled(enabled)
+    }
+
+    fun setPreferredPlayer(player: String) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setPreferredPlayer(player)
+    }
+
+    fun setPreBufferMaxMb(mb: Int) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setPreBufferMaxMb(mb)
+    }
+
+    fun clearPreBufferCache() = viewModelScope.launch(Dispatchers.IO) {
+        preBufferManager.clearCache()
+        _preBufferCacheBytes.value = 0L
+    }
+
+    fun refreshCacheSize() = viewModelScope.launch(Dispatchers.IO) {
+        _preBufferCacheBytes.value = preBufferManager.getCacheSizeBytes()
+    }
+
+    fun setExtractorAutoUpdateEnabled(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setExtractorAutoUpdateEnabled(enabled)
+    }
+
+    fun refreshExtractorStatus() = viewModelScope.launch(Dispatchers.IO) {
+        _extractorStatus.value = streamingRepository.getExtractorStatus()
+    }
+
+    fun updateExtractorNow() = viewModelScope.launch(Dispatchers.IO) {
+        _isUpdatingExtractor.value = true
+        runCatching {
+            _extractorStatus.value = streamingRepository.refreshExtractor(force = true)
+        }
+        _isUpdatingExtractor.value = false
+    }
+
+    fun setNotificationsEnabled(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setNotificationsEnabled(enabled)
+        releaseScheduler.syncSchedule()
+    }
+
+    fun markNotificationPermissionRequested() = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setHasRequestedNotificationPermission(true)
+    }
+
+    fun setNotifyEpisodes(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setNotifyEpisodes(enabled)
+    }
+
+    fun setNotifySeasonsMovies(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setNotifySeasonsMovies(enabled)
+    }
+
+    fun setNotifyOvas(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setNotifyOvas(enabled)
+    }
+
+    fun setNotifyMangas(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setNotifyMangas(enabled)
     }
 }

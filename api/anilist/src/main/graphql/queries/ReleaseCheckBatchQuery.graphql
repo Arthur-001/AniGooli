@@ -1,0 +1,37 @@
+query ReleaseCheckBatchQuery($ids: [Int]) {
+    page: Page(page: 1, perPage: 50) {
+        media(id_in: $ids) {
+            id
+            type
+            format
+            status
+            episodes
+            title {
+                english
+                romaji
+                native
+                userPreferred
+            }
+            nextAiringEpisode {
+                episode
+                airingAt
+            }
+            relations {
+                edges {
+                    relationType(version: 2)
+                    node {
+                        id
+                        type
+                        format
+                        title {
+                            english
+                            romaji
+                            native
+                            userPreferred
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

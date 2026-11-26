@@ -38,6 +38,9 @@ dependencies {
     implementation(projects.core.ui)
     implementation(projects.api.anilist)
     implementation(projects.api.preferences)
+    implementation(projects.streaming)
+    implementation(projects.downloads)
+    implementation(projects.library)
 
     // AndroidX
     implementation(libs.androidx.activityCompose)

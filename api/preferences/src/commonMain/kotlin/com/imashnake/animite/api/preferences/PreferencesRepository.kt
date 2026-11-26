@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.byteArrayPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.imashnake.animite.api.preferences.ext.getValue
 import com.imashnake.animite.api.preferences.ext.setValue
@@ -17,7 +18,7 @@ private const val DEFAULT_DENSITY_KEY = "COMFY"
 private const val USE_SYSTEM_COLOR_SCHEME = true
 private const val IS_AMOLED = false
 private const val IS_NSFW_ENABLED = false
-private const val DEFAULT_LANGUAGE_KEY = "DEFAULT"
+private const val DEFAULT_LANGUAGE_KEY = "ENGLISH"
 private const val SHOW_USER_DESCRIPTION = true
 private const val USE_PROFILE_COLOR = true
 private const val USE_EXPRESSIVE_PROGRESS_INDICATOR = true
@@ -25,6 +26,15 @@ private const val PROFILE_COLOR = "blue"
 private const val SCORE_FORMAT = "POINT_10_DECIMAL"
 private const val IS_DEV_OPTIONS_ENABLED = false
 const val DEFAULT_MEDIA_LIST_ORDER = "[]"
+const val DEFAULT_PERSONAL_LIST_COLUMNS = 3
+const val MANGA_SORT_OLDEST_FIRST = "OLDEST_FIRST"
+const val MANGA_SORT_NEWEST_FIRST = "NEWEST_FIRST"
+const val DEFAULT_STREAM_QUALITY = "1080p"
+const val AUDIO_TRACK_JAPANESE = "JAPANESE"
+const val AUDIO_TRACK_ENGLISH_DUB = "ENGLISH_DUB"
+const val PLAYER_IN_APP = "IN_APP"
+const val PLAYER_MPV = "MPV"
+const val DEFAULT_PRE_BUFFER_MB = 1024
 
 /**
  * Stores API-specific state in an on-disk cache, and exposes the values as a Flow.
@@ -204,6 +214,110 @@ class PreferencesRepository internal constructor(
     val dayHour = dataStore.getValue(dayHourKey, null)
     suspend fun setDayHour(dayHour: Float?) {
         dataStore.setValue(dayHourKey, dayHour)
+    }
+    // endregion
+
+    // region anigooli
+    private val personalListColumnsKey = intPreferencesKey("personal_list_columns")
+    val personalListColumns = dataStore.getValue(personalListColumnsKey, DEFAULT_PERSONAL_LIST_COLUMNS)
+    suspend fun setPersonalListColumns(columns: Int) {
+        dataStore.setValue(personalListColumnsKey, columns.coerceIn(2, 4))
+    }
+
+    private val mangaRelationsSortOrderKey = stringPreferencesKey("manga_relations_sort_order")
+    val mangaRelationsSortOrder = dataStore.getValue(mangaRelationsSortOrderKey, MANGA_SORT_OLDEST_FIRST)
+    suspend fun setMangaRelationsSortOrder(order: String) {
+        dataStore.setValue(mangaRelationsSortOrderKey, order)
+    }
+
+    private val defaultStreamQualityKey = stringPreferencesKey("default_stream_quality")
+    val defaultStreamQuality = dataStore.getValue(defaultStreamQualityKey, DEFAULT_STREAM_QUALITY)
+    suspend fun setDefaultStreamQuality(quality: String) {
+        dataStore.setValue(defaultStreamQualityKey, quality)
+    }
+
+    private val defaultAudioTrackKey = stringPreferencesKey("default_audio_track")
+    val defaultAudioTrack = dataStore.getValue(defaultAudioTrackKey, AUDIO_TRACK_JAPANESE)
+    suspend fun setDefaultAudioTrack(track: String) {
+        dataStore.setValue(defaultAudioTrackKey, track)
+    }
+
+    private val defaultSubtitlesEnabledKey = booleanPreferencesKey("default_subtitles_enabled")
+    val defaultSubtitlesEnabled = dataStore.getValue(defaultSubtitlesEnabledKey, true)
+    suspend fun setDefaultSubtitlesEnabled(enabled: Boolean) {
+        dataStore.setValue(defaultSubtitlesEnabledKey, enabled)
+    }
+
+    private val preferredPlayerKey = stringPreferencesKey("preferred_player")
+    val preferredPlayer = dataStore.getValue(preferredPlayerKey, PLAYER_IN_APP)
+    suspend fun setPreferredPlayer(player: String) {
+        dataStore.setValue(preferredPlayerKey, player)
+    }
+
+    private val preBufferMaxMbKey = intPreferencesKey("pre_buffer_max_mb")
+    val preBufferMaxMb = dataStore.getValue(preBufferMaxMbKey, DEFAULT_PRE_BUFFER_MB)
+    suspend fun setPreBufferMaxMb(maxMb: Int) {
+        dataStore.setValue(preBufferMaxMbKey, maxMb.coerceIn(500, 4096))
+    }
+
+    private val notificationsEnabledKey = booleanPreferencesKey("notifications_enabled")
+    val notificationsEnabled = dataStore.getValue(notificationsEnabledKey, true)
+    suspend fun setNotificationsEnabled(enabled: Boolean) {
+        dataStore.setValue(notificationsEnabledKey, enabled)
+    }
+
+    private val hasRequestedNotificationPermissionKey = booleanPreferencesKey("has_requested_notification_permission")
+    val hasRequestedNotificationPermission = dataStore.getValue(hasRequestedNotificationPermissionKey, false)
+    suspend fun setHasRequestedNotificationPermission(requested: Boolean) {
+        dataStore.setValue(hasRequestedNotificationPermissionKey, requested)
+    }
+
+    private val notifyEpisodesKey = booleanPreferencesKey("notify_episodes")
+    val notifyEpisodes = dataStore.getValue(notifyEpisodesKey, true)
+    suspend fun setNotifyEpisodes(enabled: Boolean) {
+        dataStore.setValue(notifyEpisodesKey, enabled)
+    }
+
+    private val notifySeasonsMoviesKey = booleanPreferencesKey("notify_seasons_movies")
+    val notifySeasonsMovies = dataStore.getValue(notifySeasonsMoviesKey, true)
+    suspend fun setNotifySeasonsMovies(enabled: Boolean) {
+        dataStore.setValue(notifySeasonsMoviesKey, enabled)
+    }
+
+    private val notifyOvasKey = booleanPreferencesKey("notify_ovas")
+    val notifyOvas = dataStore.getValue(notifyOvasKey, true)
+    suspend fun setNotifyOvas(enabled: Boolean) {
+        dataStore.setValue(notifyOvasKey, enabled)
+    }
+
+    private val notifyMangasKey = booleanPreferencesKey("notify_mangas")
+    val notifyMangas = dataStore.getValue(notifyMangasKey, true)
+    suspend fun setNotifyMangas(enabled: Boolean) {
+        dataStore.setValue(notifyMangasKey, enabled)
+    }
+
+    private val extractorAutoUpdateEnabledKey = booleanPreferencesKey("extractor_auto_update_enabled")
+    val extractorAutoUpdateEnabled = dataStore.getValue(extractorAutoUpdateEnabledKey, true)
+    suspend fun setExtractorAutoUpdateEnabled(enabled: Boolean) {
+        dataStore.setValue(extractorAutoUpdateEnabledKey, enabled)
+    }
+
+    private val extractorCachedVersionKey = stringPreferencesKey("extractor_cached_version")
+    val extractorCachedVersion = dataStore.getValue(extractorCachedVersionKey, null)
+    suspend fun setExtractorCachedVersion(version: String?) {
+        dataStore.setValue(extractorCachedVersionKey, version)
+    }
+
+    private val upstreamAniCliVersionKey = stringPreferencesKey("upstream_ani_cli_version")
+    val upstreamAniCliVersion = dataStore.getValue(upstreamAniCliVersionKey, null)
+    suspend fun setUpstreamAniCliVersion(version: String?) {
+        dataStore.setValue(upstreamAniCliVersionKey, version)
+    }
+
+    private val extractorLastCheckedMsKey = longPreferencesKey("extractor_last_checked_ms")
+    val extractorLastCheckedMs = dataStore.getValue(extractorLastCheckedMsKey, 0L)
+    suspend fun setExtractorLastCheckedMs(timestampMs: Long) {
+        dataStore.setValue(extractorLastCheckedMsKey, timestampMs)
     }
     // endregion
 

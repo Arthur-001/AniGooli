@@ -26,7 +26,7 @@ class AnilistUserRepository(
 ) {
     fun fetchViewer(
         useNetwork: Boolean,
-        language: Media.Language = Media.Language.DEFAULT,
+        language: Media.Language = Media.Language.ENGLISH,
     ): Flow<Result<User>> {
         return apolloClient.query(ViewerQuery())
             .fetchPolicy(
@@ -44,7 +44,7 @@ class AnilistUserRepository(
         id: Int?,
         type: MediaType?,
         useNetwork: Boolean,
-        language: Media.Language = Media.Language.DEFAULT,
+        language: Media.Language = Media.Language.ENGLISH,
         scoreFormat: ScoreFormat,
         mediaListOrder: List<String>
     ): Flow<Result<User.MediaCollection>> {

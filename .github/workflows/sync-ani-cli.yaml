@@ -1,0 +1,90 @@
+name: Sync Upstream ani-cli Config
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check upstream pystardust/ani-cli
+        id: check
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re, urllib.request
+
+          manifest_path = "scripts/extractor-manifest.json"
+          with open(manifest_path, "r", encoding="utf-8") as f:
+              manifest = json.load(f)
+
+          script_text = urllib.request.urlopen(
+              "https://raw.githubusercontent.com/pystardust/ani-cli/master/ani-cli",
+              timeout=15
+          ).read().decode("utf-8")
+
+          ver_m = re.search(r'^version_number="([^"]+)"', script_text, re.M)
+          base_m = re.search(r'^miruro_base="([^"]+)"', script_text, re.M)
+          agent_m = re.search(r'^agent="([^"]+)"', script_text, re.M)
+
+          new_ver = ver_m.group(1) if ver_m else manifest.get("upstreamAniCliVersion", "")
+          new_base = base_m.group(1).rstrip("/") if base_m else manifest["defaultConfig"]["miruroBase"]
+          new_agent = agent_m.group(1) if agent_m else manifest["defaultConfig"]["userAgent"]
+
+          m_start = script_text.find("miruro_curl()")
+          m_end = script_text.find("get_video_link()")
+          if m_start >= 0 and m_end > m_start:
+              scrape_hash = hashlib.sha256(script_text[m_start:m_end].encode("utf-8")).hexdigest()
+          else:
+              scrape_hash = "UNAVAILABLE"
+
+          old_ver = manifest.get("upstreamAniCliVersion", "")
+          old_base = manifest["defaultConfig"]["miruroBase"]
+          old_agent = manifest["defaultConfig"]["userAgent"]
+          old_hash = manifest.get("upstreamScrapeHash", "")
+
+          config_changed = (new_ver != old_ver) or (new_base != old_base) or (new_agent != old_agent)
+          scrape_changed = bool(old_hash) and (scrape_hash != old_hash)
+
+          if config_changed:
+              manifest["upstreamAniCliVersion"] = new_ver
+              manifest["defaultConfig"]["miruroBase"] = new_base
+              manifest["defaultConfig"]["userAgent"] = new_agent
+              with open(manifest_path, "w", encoding="utf-8") as f:
+                  json.dump(manifest, f, indent=2)
+                  f.write("\n")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"config_changed={'true' if config_changed else 'false'}\n")
+              out.write(f"scrape_changed={'true' if scrape_changed else 'false'}\n")
+              out.write(f"new_ver={new_ver}\n")
+              out.write(f"new_base={new_base}\n")
+              out.write(f"new_hash={scrape_hash}\n")
+          PY
+
+      - name: Commit updated manifest config
+        if: steps.check.outputs.config_changed == 'true'
+        run: |
+          git config user.name "AniGooli Sync Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add scripts/extractor-manifest.json
+          git commit -m "chore: sync upstream ani-cli v${{ steps.check.outputs.new_ver }} config"
+          git push
+
+      - name: Open issue on structural scraping change
+        if: steps.check.outputs.scrape_changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "upstream-ani-cli-change" --description "Upstream ani-cli scraper logic changed" --color "D93F0B" || true
+          gh issue create \
+            --title "Upstream ani-cli scraper changed (v${{ steps.check.outputs.new_ver }})" \
+            --label "upstream-ani-cli-change" \
+            --body "Detected structural change in \`pystardust/ani-cli\` scraping logic (new version: \`${{ steps.check.outputs.new_ver }}\`, miruroBase: \`${{ steps.check.outputs.new_base }}\`, scrapeHash: \`${{ steps.check.outputs.new_hash }}\`). Review \`https://github.com/pystardust/ani-cli/blob/master/ani-cli\` and update \`scripts/extractor.js\`."

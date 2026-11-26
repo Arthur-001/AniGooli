@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notif_channel_episodes">New Episodes</string>
+    <string name="notif_channel_seasons">New Seasons &amp; Movies</string>
+    <string name="notif_channel_ovas">New OVAs &amp; Specials</string>
+    <string name="notif_channel_mangas">New Mangas</string>
+</resources>

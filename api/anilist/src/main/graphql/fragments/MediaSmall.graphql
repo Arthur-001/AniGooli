@@ -1,6 +1,14 @@
 fragment MediaSmall on Media {
     id
     type
+    format
+    episodes
+    seasonYear
+    startDate {
+        year
+        month
+        day
+    }
     title {
         userPreferred
         romaji
