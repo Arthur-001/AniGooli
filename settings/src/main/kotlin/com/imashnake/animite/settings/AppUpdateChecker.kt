@@ -6,7 +6,9 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.net.HttpURLConnection
 import java.net.URL
 import javax.inject.Inject
@@ -102,14 +104,30 @@ class AppUpdateChecker @Inject constructor(
     }
 
     internal companion object {
+        private val json = Json { ignoreUnknownKeys = true }
+
+        @Serializable
+        private data class GitHubReleaseDto(
+            @SerialName("tag_name") val tagName: String = "",
+            @SerialName("html_url") val htmlUrl: String = "",
+            val body: String = "",
+            val assets: List<GitHubAssetDto> = emptyList(),
+        )
+
+        @Serializable
+        private data class GitHubAssetDto(
+            val name: String = "",
+            @SerialName("browser_download_url") val browserDownloadUrl: String = "",
+        )
+
         internal fun parseReleaseJson(
             jsonBody: String,
             currentVersion: String,
         ): AppUpdateCheckResult {
             return runCatching {
-                val root = JSONObject(jsonBody)
-                val tagName = root.optString("tag_name").trim()
-                val htmlUrl = root.optString("html_url").trim()
+                val release = json.decodeFromString<GitHubReleaseDto>(jsonBody)
+                val tagName = release.tagName.trim()
+                val htmlUrl = release.htmlUrl.trim()
                 if (tagName.isEmpty() || htmlUrl.isEmpty()) {
                     return AppUpdateCheckResult.Error("Invalid GitHub release payload")
                 }
@@ -119,28 +137,18 @@ class AppUpdateChecker @Inject constructor(
                     return AppUpdateCheckResult.UpToDate(currentVersion)
                 }
 
-                val assets = root.optJSONArray("assets")
-                var apkUrl: String? = null
-                if (assets != null) {
-                    for (i in 0 until assets.length()) {
-                        val asset = assets.optJSONObject(i) ?: continue
-                        val name = asset.optString("name")
-                        val downloadUrl = asset.optString("browser_download_url")
-                        if (name.endsWith(".apk", ignoreCase = true) && downloadUrl.isNotBlank()) {
-                            apkUrl = downloadUrl
-                            break
-                        }
-                    }
-                }
+                val apkUrl = release.assets.firstOrNull { asset ->
+                    asset.name.endsWith(".apk", ignoreCase = true) &&
+                        asset.browserDownloadUrl.isNotBlank()
+                }?.browserDownloadUrl
 
-                val notes = root.optString("body").trim()
                 AppUpdateCheckResult.UpdateAvailable(
                     AppUpdateInfo(
                         versionTag = tagName,
                         versionName = normalizedVersion,
                         releaseUrl = htmlUrl,
                         apkDownloadUrl = apkUrl,
-                        releaseNotes = notes,
+                        releaseNotes = release.body.trim(),
                     )
                 )
             }.getOrElse { err ->
