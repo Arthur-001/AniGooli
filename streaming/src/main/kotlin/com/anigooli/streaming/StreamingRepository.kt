@@ -178,7 +178,7 @@ class StreamingRepository @Inject constructor(
 
     private fun normalizeMatchTitle(raw: String): String = raw
         .lowercase()
-        .replace(Regex("""[()\[\]{}:;\-.,!?'"/]+"""), " ")
+        .replace(Regex("""[^\p{L}\p{N}\s]+"""), " ")
         .replace(Regex("""\s+"""), " ")
         .trim()
 
