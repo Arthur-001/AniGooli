@@ -99,15 +99,16 @@ class AnimeViewModel @Inject constructor(
         flow2 = prefs,
         transform = ::Pair
     ).flatMapLatest { (_, prefs) ->
-        mediaListRepository.fetchMediaList(
+        mediaListRepository.fetchLatestEpisodesList(
             useNetwork = useNetwork,
             filterStrategy = FilterStrategy(
                 mediaType = MediaType.ANIME,
                 sort = listOf(MediaSort.UPDATED_AT_DESC),
-                includedStatuses = listOf(MediaStatus.RELEASING),
+                page = 1,
                 isNsfwEnabled = prefs.isNsfwEnabled,
                 language = prefs.language,
-                perPage = prefs.listSize
+                perPage = prefs.listSize,
+                isLatestEpisodes = true,
             ),
         )
     }.asResource { AnimeRow(AnimeList.LATEST_EPISODES.res, it) }

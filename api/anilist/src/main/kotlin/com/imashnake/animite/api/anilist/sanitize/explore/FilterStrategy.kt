@@ -25,4 +25,5 @@ data class FilterStrategy(
     val isAdult: Boolean = false,
     val isNsfwEnabled: Boolean = false,
     val language: Media.Language = Media.Language.ENGLISH,
+    val isLatestEpisodes: Boolean = false,
 )

@@ -191,6 +191,15 @@ class PreferencesRepository internal constructor(
         dataStore.setValue(listSizeKey, listSize)
     }
 
+    private val explorePerPageKey = intPreferencesKey("explore_per_page")
+    /** Saved number of results per page on the Explore screen (25, 50, 75, or 100). */
+    val explorePerPage = dataStore.getValue(explorePerPageKey, DEFAULT_EXPLORE_PER_PAGE)
+    /** Persists the Explore results-per-page count. */
+    suspend fun setExplorePerPage(perPage: Int) {
+        val valid = if (perPage in EXPLORE_PER_PAGE_OPTIONS) perPage else DEFAULT_EXPLORE_PER_PAGE
+        dataStore.setValue(explorePerPageKey, valid)
+    }
+
     private val showUserDescriptionKey = booleanPreferencesKey("show_user_description")
     val showUserDescription = dataStore.getValue(showUserDescriptionKey, SHOW_USER_DESCRIPTION)
     suspend fun setShowUserDescription(showUserDescription: Boolean) {
@@ -471,5 +480,10 @@ class PreferencesRepository internal constructor(
 
     // endregion
 
-    companion object
+    companion object {
+        /** Default number of results per page on the Explore tab. */
+        const val DEFAULT_EXPLORE_PER_PAGE = 25
+        /** Supported results-per-page choices on the Explore tab. */
+        val EXPLORE_PER_PAGE_OPTIONS = listOf(25, 50, 75, 100)
+    }
 }

@@ -33,6 +33,7 @@ data class ExploreRoute(
     val season: String? = null,
     val year: Int? = null,
     val genre: String? = null,
+    val isLatestEpisodes: Boolean = false,
 )
 
 @Serializable

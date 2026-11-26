@@ -134,13 +134,14 @@ class StreamingRepository @Inject constructor(
                 candidatePool = buildCandidatePool()
             }
             if (preferHentaiStreamOnly || candidatePool.isEmpty()) {
-                for (q in cleanedTitles.take(2)) {
+                for (q in buildHentaiStreamQueries(cleanedTitles)) {
                     val hsResults = runCatching { searchHentaiStream(q) }.getOrDefault(emptyList())
                     hsResults.forEach { item ->
                         aggregated.putIfAbsent(item.providerId, item)
                     }
+                    candidatePool = buildCandidatePool()
+                    if (candidatePool.isNotEmpty()) break
                 }
-                candidatePool = buildCandidatePool()
             }
             candidatePool.forEach { item ->
                 providerTitlesCache[item.providerId] = cleanedTitles
@@ -189,7 +190,10 @@ class StreamingRepository @Inject constructor(
         val normalizedBase = normalizeMatchTitle(baseTitle)
         if (normalizedBase.isEmpty()) return false
         val isHentaiStream = HentaiStreamParser.isHentaiStreamProviderId(item.providerId)
-        val baseWords = normalizedBase.split(" ").filter { it.length >= 3 }
+        val shortBase = normalizeMatchTitle(
+            baseTitle.substringBefore(':').substringBefore(" - "),
+        )
+        val shortWords = shortBase.split(" ").filter { it.length >= 3 }
         return listOfNotNull(item.title, item.englishTitle, item.romajiTitle).any { raw ->
             val norm = normalizeMatchTitle(raw)
             norm == normalizedBase ||
@@ -201,9 +205,30 @@ class StreamingRepository @Inject constructor(
                 (isHentaiStream && (
                     norm.startsWith("$normalizedBase ") ||
                         norm.contains(normalizedBase) ||
-                        (baseWords.size >= 2 && baseWords.all { norm.contains(it) })
+                        (shortBase.length >= 5 && norm.contains(shortBase)) ||
+                        (shortWords.size >= 2 && shortWords.take(3).all { norm.contains(it) })
                     ))
         }
+    }
+
+    private fun buildHentaiStreamQueries(titles: List<String>): List<String> {
+        val queries = LinkedHashSet<String>()
+        for (title in titles) {
+            val trimmed = title.trim()
+            if (trimmed.isEmpty()) continue
+            queries.add(trimmed)
+            val beforeColon = trimmed.substringBefore(':').substringBefore(" - ").trim()
+            if (beforeColon.isNotEmpty()) queries.add(beforeColon)
+            val normWords = normalizeMatchTitle(beforeColon.ifEmpty { trimmed })
+                .split(" ")
+                .filter { it.isNotEmpty() }
+            if (normWords.size >= 2) {
+                queries.add(normWords.take(2).joinToString(" "))
+            } else if (normWords.size == 1) {
+                queries.add(normWords.first())
+            }
+        }
+        return queries.take(4)
     }
 
     private fun normalizeMatchTitle(raw: String): String = raw
@@ -406,9 +431,11 @@ class StreamingRepository @Inject constructor(
     }
 
     private suspend fun resolveHentaiStreamFallbackByTitles(titles: List<String>): List<StreamSource> {
-        for (title in titles.take(2)) {
-            val results = runCatching { searchHentaiStream(title) }.getOrDefault(emptyList())
-            val matched = results.firstOrNull { isExactOrVariantMatch(it, title) } ?: continue
+        for (query in buildHentaiStreamQueries(titles)) {
+            val results = runCatching { searchHentaiStream(query) }.getOrDefault(emptyList())
+            val matched = results.firstOrNull { item ->
+                titles.any { title -> isExactOrVariantMatch(item, title) }
+            } ?: continue
             val candidates = runCatching {
                 resolveHentaiStreamMediaCandidates(matched.providerId).candidates
             }.getOrDefault(emptyList())

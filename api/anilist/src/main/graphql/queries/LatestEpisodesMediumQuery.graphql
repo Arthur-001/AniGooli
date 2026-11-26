@@ -1,0 +1,29 @@
+query LatestEpisodesMediumQuery(
+    $page: Int,
+    $perPage: Int,
+    $airingAtLesser: Int,
+) {
+    page: Page(
+        page: $page,
+        perPage: $perPage
+    ) {
+        pageInfo {
+            currentPage
+            lastPage
+            hasNextPage
+        }
+        airingSchedules(
+            notYetAired: false,
+            airingAt_lesser: $airingAtLesser,
+            sort: [TIME_DESC]
+        ) {
+            id
+            airingAt
+            episode
+            media {
+                isAdult
+                ...MediaMedium
+            }
+        }
+    }
+}

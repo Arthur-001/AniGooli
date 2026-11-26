@@ -336,7 +336,8 @@ private fun AnimeRow(
                     isDescending = sort?.second,
                     season = mediaList.filterStrategy.season?.name,
                     year = mediaList.filterStrategy.year,
-                    genre = mediaList.filterStrategy.genre
+                    genre = mediaList.filterStrategy.genre,
+                    isLatestEpisodes = mediaList.filterStrategy.isLatestEpisodes,
                 )
             )
         },

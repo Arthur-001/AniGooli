@@ -16,7 +16,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.absoluteValue
 
-private const val FALLBACK_SEARCH_TIMEOUT_MS = 4_000L
+private const val FALLBACK_SEARCH_TIMEOUT_MS = 3_000L
 private const val MAX_CACHE_ENTRIES = 50
 private const val SCORE_EXACT_MATCH = 10_000
 private const val SCORE_VARIANT_EXACT = 9_000
@@ -75,39 +75,67 @@ class ProviderSearchHelper @Inject constructor(
 
     /**
      * Fetches `ani-cli` and Jikan (`sfw=false`) results for [query] in parallel with bounded timeouts,
-     * merges them with [anilistResults], and sorts exact/closest matches to the top.
+     * without waiting for AniList first.
      */
-    suspend fun mergeProviderResults(
+    suspend fun fetchProviderAndJikan(query: String): Pair<List<ProviderAnime>, List<JikanAnimeInfo>> =
+        coroutineScope {
+            val trimmed = query.trim()
+            if (trimmed.isEmpty()) return@coroutineScope emptyList<ProviderAnime>() to emptyList()
+            val providerDeferred = async {
+                withTimeoutOrNull(FALLBACK_SEARCH_TIMEOUT_MS) {
+                    streamingRepository.searchProvider(trimmed).getOrDefault(emptyList())
+                }.orEmpty()
+            }
+            val jikanDeferred = async {
+                withTimeoutOrNull(FALLBACK_SEARCH_TIMEOUT_MS) {
+                    jikanMetadataClient.searchAnime(trimmed, limit = 10)
+                }.orEmpty()
+            }
+            providerDeferred.await() to jikanDeferred.await()
+        }
+
+    /**
+     * Merges pre-fetched [providerItems] and [jikanItems] with [anilistResults],
+     * ranks exact/closest matches to the top, and caches the result for [query].
+     */
+    fun mergeAndCachePrefetched(
         query: String,
         anilistResults: List<Media.Medium>,
-    ): ImmutableList<Media.Medium> = coroutineScope {
+        providerItems: List<ProviderAnime>,
+        jikanItems: List<JikanAnimeInfo>,
+        cacheResult: Boolean = true,
+    ): ImmutableList<Media.Medium> {
         val trimmed = query.trim()
-        if (trimmed.isEmpty()) return@coroutineScope anilistResults.toImmutableList()
-
-        val providerDeferred = async {
-            withTimeoutOrNull(FALLBACK_SEARCH_TIMEOUT_MS) {
-                streamingRepository.searchProvider(trimmed).getOrDefault(emptyList())
-            }.orEmpty()
-        }
-        val jikanDeferred = async {
-            withTimeoutOrNull(FALLBACK_SEARCH_TIMEOUT_MS) {
-                jikanMetadataClient.searchAnime(trimmed, limit = 10)
-            }.orEmpty()
-        }
-
-        val providerItems = providerDeferred.await()
-        val jikanItems = jikanDeferred.await()
-
+        if (trimmed.isEmpty()) return anilistResults.toImmutableList()
         val ranked = buildMergedAndRanked(
             query = trimmed,
             anilistResults = anilistResults,
             providerItems = providerItems,
             jikanItems = jikanItems,
         )
-        if (ranked.isNotEmpty()) {
+        if (cacheResult && ranked.isNotEmpty()) {
             putCachedResults(trimmed, ranked)
         }
-        ranked
+        return ranked
+    }
+
+    /**
+     * Fetches `ani-cli` and Jikan (`sfw=false`) results for [query] in parallel with bounded timeouts,
+     * merges them with [anilistResults], and sorts exact/closest matches to the top.
+     */
+    suspend fun mergeProviderResults(
+        query: String,
+        anilistResults: List<Media.Medium>,
+    ): ImmutableList<Media.Medium> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return anilistResults.toImmutableList()
+        val (providerItems, jikanItems) = fetchProviderAndJikan(trimmed)
+        return mergeAndCachePrefetched(
+            query = trimmed,
+            anilistResults = anilistResults,
+            providerItems = providerItems,
+            jikanItems = jikanItems,
+        )
     }
 
     /** Ranks [results] so exact title matches appear first and loose matches appear at the bottom. */

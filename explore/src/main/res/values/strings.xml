@@ -8,6 +8,8 @@
     <string name="format">Format</string>
     <string name="status">Status</string>
     <string name="year">Year</string>
+    <string name="results_per_page">Results per page</string>
+    <string name="latest_episodes_sort">Latest Episodes</string>
     <string name="others">Others</string>
 
     <string name="adult">Adult</string>

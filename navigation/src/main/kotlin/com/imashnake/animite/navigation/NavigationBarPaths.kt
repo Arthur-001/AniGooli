@@ -60,6 +60,7 @@ enum class NavigationBarPaths(
                     saveState = true
                 }
                 launchSingleTop = true
+                restoreState = true
             }
         },
         matchesDestination = { navBackStackEntry ->

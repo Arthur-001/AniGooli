@@ -99,7 +99,7 @@ class AnilistMediaRepository(
         .fetchPolicy(
             if (useNetwork) {
                 FetchPolicy.NetworkOnly
-            } else FetchPolicy.NetworkFirst
+            } else FetchPolicy.CacheFirst
         )
         .toFlow()
         .filter { it.exception == null }
@@ -109,6 +109,84 @@ class AnilistMediaRepository(
                     Media.Medium(query.mediaMedium, language)
                 }.toImmutableList(),
                 info = data.page.pageInfo?.let { Info(it, filterStrategy.perPage) }
+            )
+        }
+    }
+
+    /**
+     * Fetches the most recently aired anime episodes (ordered newest to oldest) for the Anime home row.
+     */
+    fun fetchLatestEpisodesList(
+        useNetwork: Boolean,
+        filterStrategy: FilterStrategy,
+    ): Flow<Result<MediaList>> = with(filterStrategy) {
+        val nowSeconds = (System.currentTimeMillis() / 1000L).toInt()
+        val requestPerPage = (perPage * 2).coerceIn(perPage, 50)
+        apolloClient.query(
+            LatestEpisodesQuery(
+                page = Optional.presentIfNotNull(page.coerceAtLeast(1)),
+                perPage = Optional.presentIfNotNull(requestPerPage),
+                airingAtLesser = Optional.presentIfNotNull(nowSeconds),
+            )
+        )
+        .fetchPolicy(
+            if (useNetwork) FetchPolicy.NetworkOnly else FetchPolicy.NetworkFirst
+        )
+        .toFlow()
+        .filter { it.exception == null }
+        .asResult { data ->
+            val items = data.page?.airingSchedules
+                .orEmpty()
+                .mapNotNull { schedule ->
+                    val media = schedule?.media ?: return@mapNotNull null
+                    if (!isNsfwEnabled && media.isAdult == true) return@mapNotNull null
+                    Media.Small(media.mediaSmall, language)
+                }
+                .distinctBy { it.id }
+                .take(perPage)
+                .toImmutableList()
+            MediaList(
+                list = items,
+                filterStrategy = this,
+            )
+        }
+    }
+
+    /**
+     * Fetches the most recently aired anime episodes (ordered newest to oldest) for the Explore grid.
+     */
+    fun fetchLatestEpisodesMediumList(
+        useNetwork: Boolean,
+        filterStrategy: FilterStrategy,
+    ): Flow<Result<Page<Media.Medium>>> = with(filterStrategy) {
+        val nowSeconds = (System.currentTimeMillis() / 1000L).toInt()
+        val requestPerPage = (perPage * 2).coerceIn(perPage, 50)
+        apolloClient.query(
+            LatestEpisodesMediumQuery(
+                page = Optional.presentIfNotNull(page.coerceAtLeast(1)),
+                perPage = Optional.presentIfNotNull(requestPerPage),
+                airingAtLesser = Optional.presentIfNotNull(nowSeconds),
+            )
+        )
+        .fetchPolicy(
+            if (useNetwork) FetchPolicy.NetworkOnly else FetchPolicy.CacheFirst
+        )
+        .toFlow()
+        .filter { it.exception == null }
+        .asResult { data ->
+            val items = data.page?.airingSchedules
+                .orEmpty()
+                .mapNotNull { schedule ->
+                    val media = schedule?.media ?: return@mapNotNull null
+                    if (!isNsfwEnabled && media.isAdult == true) return@mapNotNull null
+                    Media.Medium(media.mediaMedium, language)
+                }
+                .distinctBy { it.id }
+                .take(perPage)
+                .toImmutableList()
+            Page(
+                list = items,
+                info = data.page?.pageInfo?.let { Info(it, filterStrategy.perPage) },
             )
         }
     }

@@ -122,6 +122,7 @@ import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.type.MediaType
+import com.imashnake.animite.api.preferences.PreferencesRepository
 import com.imashnake.animite.core.resource.Resource
 import com.imashnake.animite.core.ui.LocalPaddings
 import com.imashnake.animite.core.ui.component.BottomSheet
@@ -190,6 +191,8 @@ fun ExploreScreen(
     val chipFormatGroup by viewModel.chipFormatGroup.collectAsState()
     val chipStatusGroup by viewModel.chipStatusGroup.collectAsState()
     val cardSize by viewModel.cardSize.collectAsState()
+    val explorePerPage by viewModel.explorePerPage.collectAsState()
+    val isLatestEpisodes by viewModel.isLatestEpisodes.collectAsState()
 
     var isRefreshing by remember { mutableStateOf(false) }
     val pullToRefreshState = rememberPullToRefreshState()
@@ -274,6 +277,7 @@ fun ExploreScreen(
                         }
                     }.toImmutableList(),
                     selectedSort = selectedSort,
+                    isLatestEpisodes = isLatestEpisodes,
                     onSortSelected = { viewModel.setMediaSort(it) },
                     isDescending = isDescending,
                     toggleOrder = { viewModel.setIsDescending(!isDescending) },
@@ -389,6 +393,8 @@ fun ExploreScreen(
                     isNsfwEnabled = isNsfwEnabled,
                     isAdult = isAdult == true,
                     setIsAdult = viewModel::setIsAdult,
+                    perPage = explorePerPage,
+                    onPerPageChanged = viewModel::setExplorePerPage,
                     chipFormatGroup = chipFormatGroup,
                     chipStatusGroup = chipStatusGroup,
                     includeChipFilter = viewModel::includeFilter,
@@ -468,6 +474,7 @@ private fun SearchBar(
 private fun Sort(
     sorts: ImmutableList<Media.Sort>,
     selectedSort: Media.Sort,
+    isLatestEpisodes: Boolean,
     onSortSelected: (Media.Sort) -> Unit,
     isDescending: Boolean,
     toggleOrder: () -> Unit,
@@ -504,7 +511,11 @@ private fun Sort(
                     modifier = Modifier.size(11.dp)
                 )
                 Text(
-                    text = stringResource(it.res),
+                    text = if (isLatestEpisodes) {
+                        stringResource(R.string.latest_episodes_sort)
+                    } else {
+                        stringResource(it.res)
+                    },
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                 )
@@ -643,6 +654,8 @@ private fun FilterBottomSheet(
     isNsfwEnabled: Boolean,
     isAdult: Boolean,
     setIsAdult: (Boolean) -> Unit,
+    perPage: Int,
+    onPerPageChanged: (Int) -> Unit,
     chipFormatGroup: ExploreViewModel.ChipFilterGroup,
     chipStatusGroup: ExploreViewModel.ChipFilterGroup,
     includeChipFilter: (ExploreViewModel.ChipFilterType, String) -> Unit,
@@ -758,6 +771,18 @@ private fun FilterBottomSheet(
                 )
             }
 
+            ToggleFilter(
+                title = stringResource(R.string.results_per_page),
+                entries = PreferencesRepository.EXPLORE_PER_PAGE_OPTIONS.map { it.toString() }.toImmutableList(),
+                selectedToggle = perPage.toString(),
+                onToggled = { raw ->
+                    haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    raw?.toIntOrNull()?.let(onPerPageChanged)
+                },
+                icon = null,
+                text = { it },
+            )
+
             Spacer(modifier = Modifier.size(LocalPaddings.current.small))
 
             // TODO: Not properly horizontally aligned when flowed.
@@ -799,7 +824,7 @@ private fun ToggleFilter(
     entries: ImmutableList<String>,
     selectedToggle: String?,
     onToggled: (String?) -> Unit,
-    icon: @Composable (String) -> ImageVector,
+    icon: (@Composable (String) -> ImageVector)?,
     text: @Composable (String) -> String,
     modifier: Modifier = Modifier
 ) {
@@ -828,13 +853,15 @@ private fun ToggleFilter(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(LocalPaddings.current.tiny)
                     ) {
-                        Icon(
-                            imageVector = icon(entry),
-                            contentDescription = text(entry),
-                            modifier = Modifier
-                                .graphicsLayer { alpha = 0.5f }
-                                .height(14.dp)
-                        )
+                        if (icon != null) {
+                            Icon(
+                                imageVector = icon(entry),
+                                contentDescription = text(entry),
+                                modifier = Modifier
+                                    .graphicsLayer { alpha = 0.5f }
+                                    .height(14.dp)
+                            )
+                        }
 
                         Text(
                             text = text(entry),

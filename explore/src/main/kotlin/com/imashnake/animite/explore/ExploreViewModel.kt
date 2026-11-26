@@ -28,10 +28,13 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
@@ -54,8 +57,9 @@ import kotlin.time.Duration.Companion.milliseconds
 class ExploreViewModel @Inject constructor(
     private val mediaListRepository: AnilistMediaRepository,
     private val providerSearchHelper: ProviderSearchHelper,
-    private val savedStateHandle: SavedStateHandle,
+    savedStateHandle: SavedStateHandle,
     private val preferencesRepository: PreferencesRepository,
+    private val stateStore: ExploreStateStore,
 ) : ViewModel() {
     /** Effective card size for the Explore tab (per-page override falling back to global preference). */
     val cardSize = combine(
@@ -69,23 +73,40 @@ class ExploreViewModel @Inject constructor(
     fun setCardSize(size: MediaCardSize) = viewModelScope.launch {
         preferencesRepository.setExploreCardSize(size.name)
     }
+
+    /** Saved results-per-page count for Explore (25, 50, 75, or 100). */
+    val explorePerPage: StateFlow<Int> = preferencesRepository.explorePerPage
+        .filterNotNull()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(1000),
+            initialValue = PreferencesRepository.DEFAULT_EXPLORE_PER_PAGE,
+        )
+
+    /** Persists the user's chosen results-per-page count (25, 50, 75, or 100). */
+    fun setExplorePerPage(perPage: Int) = viewModelScope.launch {
+        stateStore.page.value = 1
+        preferencesRepository.setExplorePerPage(perPage)
+    }
+
     private val navArgs = savedStateHandle.toRoute<ExploreRoute>()
 
     private val refreshTrigger = MutableSharedFlow<Unit>()
 
     var useNetwork = false
 
-    val selectedSort = savedStateHandle.getStateFlow(Constants.SORT, navArgs.sortName?.let { Media.Sort.valueOf(it) } ?: Media.Sort.POPULARITY)
-    val isDescending = savedStateHandle.getStateFlow(Constants.ORDER, navArgs.isDescending ?: true)
+    val selectedSort = stateStore.selectedSort
+    val isDescending = stateStore.isDescending
+    val isLatestEpisodes = stateStore.isLatestEpisodes
 
-    val searchQuery = savedStateHandle.getStateFlow<String?>(SEARCH_QUERY, null)
+    val searchQuery = stateStore.searchQuery
 
-    val mediaType = savedStateHandle.getStateFlow(Constants.MEDIA_TYPE_FILTER, navArgs.mediaType ?: MediaType.ANIME.name)
+    val mediaType = stateStore.mediaType
 
-    private val _allGenres = savedStateHandle.getMutableStateFlow<Set<String>?>(Constants._ALL_FILTERS + Constants.GENRES, null)
-    private val allGenres = savedStateHandle.getMutableStateFlow<Set<String>?>(Constants.ALL_FILTERS + Constants.GENRES, null)
-    private val includedGenres = savedStateHandle.getMutableStateFlow(Constants.INCLUDED_FILTERS + Constants.GENRES, setOfNotNull(navArgs.genre))
-    private val excludedGenres = savedStateHandle.getMutableStateFlow(Constants.EXCLUDED_FILTERS + Constants.GENRES, emptySet<String>())
+    private val _allGenres = stateStore.baseAllGenres
+    private val allGenres = stateStore.allGenres
+    private val includedGenres = stateStore.includedGenres
+    private val excludedGenres = stateStore.excludedGenres
     private val genreSegregation = combine(
         flow = includedGenres,
         flow2 = excludedGenres,
@@ -105,16 +126,16 @@ class ExploreViewModel @Inject constructor(
         initialValue = ChipFilterGroup(type = ChipFilterType.GENRE, persistentListOf(), persistentListOf(), persistentListOf())
     )
 
-    val selectedSeason = savedStateHandle.getStateFlow(Constants.SEASON, navArgs.season)
-    val selectedYear = savedStateHandle.getStateFlow(Constants.YEAR, navArgs.year)
+    val selectedSeason = stateStore.selectedSeason
+    val selectedYear = stateStore.selectedYear
     val seasonYear = selectedSeason.combine(selectedYear) { season, year ->
         SeasonYear(season, year)
     }
 
-    private val _allFormats = savedStateHandle.getMutableStateFlow<Set<String>?>(Constants._ALL_FILTERS + Constants.FORMATS, null)
-    private val allFormats = savedStateHandle.getMutableStateFlow<Set<String>?>(Constants.ALL_FILTERS + Constants.FORMATS, null)
-    private val includedFormats = savedStateHandle.getMutableStateFlow<Set<String>>(Constants.INCLUDED_FILTERS + Constants.FORMATS, emptySet())
-    private val excludedFormats = savedStateHandle.getMutableStateFlow<Set<String>>(Constants.EXCLUDED_FILTERS + Constants.FORMATS, emptySet())
+    private val _allFormats = stateStore.baseAllFormats
+    private val allFormats = stateStore.allFormats
+    private val includedFormats = stateStore.includedFormats
+    private val excludedFormats = stateStore.excludedFormats
     private val formatSegregation = combine(
         flow = includedFormats,
         flow2 = excludedFormats,
@@ -134,17 +155,17 @@ class ExploreViewModel @Inject constructor(
         initialValue = ChipFilterGroup(type = ChipFilterType.GENRE, persistentListOf(), persistentListOf(), persistentListOf())
     )
 
-    private val _allStatuses = savedStateHandle.getMutableStateFlow<Set<String>?>(Constants._ALL_FILTERS + Constants.STATUSES, null)
-    private val allStatuses = savedStateHandle.getMutableStateFlow<Set<String>?>(Constants.ALL_FILTERS + Constants.STATUSES, null)
-    private val includedStatuses = savedStateHandle.getMutableStateFlow<Set<String>>(Constants.INCLUDED_FILTERS + Constants.STATUSES, emptySet())
-    private val excludedStatuses = savedStateHandle.getMutableStateFlow<Set<String>>(Constants.EXCLUDED_FILTERS + Constants.STATUSES, emptySet())
+    private val _allStatuses = stateStore.baseAllStatuses
+    private val allStatuses = stateStore.allStatuses
+    private val includedStatuses = stateStore.includedStatuses
+    private val excludedStatuses = stateStore.excludedStatuses
     private val statusSegregation = combine(
         flow = includedStatuses,
         flow2 = excludedStatuses,
         transform = ::Pair
     ).map { ChipFilterSegregation(it.first, it.second) }
 
-    private val page = savedStateHandle.getMutableStateFlow(Constants.PAGE, 1)
+    private val page = stateStore.page
 
     val chipStatusGroup = combine(allStatuses, includedStatuses, excludedStatuses) { (all, included, excluded) ->
         ChipFilterGroup(
@@ -163,27 +184,69 @@ class ExploreViewModel @Inject constructor(
         .combine(isDescending, ::Pair)
         .map { (sort, isDescending) -> Media.Sort.pollute(sort, isDescending) }
 
-    val isAdult = savedStateHandle.getStateFlow<Boolean?>(Constants.IS_ADULT, false)
+    val isAdult = stateStore.isAdult
 
     init {
+        val hasExplicitRouteArgs = navArgs.sortName != null ||
+            navArgs.season != null ||
+            navArgs.year != null ||
+            navArgs.genre != null ||
+            navArgs.isLatestEpisodes
+        val routeSignature = listOf(
+            navArgs.mediaType,
+            navArgs.sortName,
+            navArgs.isDescending,
+            navArgs.season,
+            navArgs.year,
+            navArgs.genre,
+            navArgs.isLatestEpisodes,
+        ).joinToString("|")
+
+        if (hasExplicitRouteArgs && routeSignature != stateStore.lastAppliedRouteSignature) {
+            stateStore.lastAppliedRouteSignature = routeSignature
+            stateStore.searchQuery.value = null
+            stateStore.mediaType.value = navArgs.mediaType ?: MediaType.ANIME.name
+            stateStore.selectedSort.value = navArgs.sortName?.let { Media.Sort.valueOf(it) } ?: Media.Sort.POPULARITY
+            stateStore.isDescending.value = navArgs.isDescending ?: true
+            stateStore.selectedSeason.value = navArgs.season
+            stateStore.selectedYear.value = navArgs.year
+            stateStore.isLatestEpisodes.value = navArgs.isLatestEpisodes
+            stateStore.includedGenres.value = setOfNotNull(navArgs.genre)
+            stateStore.excludedGenres.value = emptySet()
+            stateStore.includedFormats.value = emptySet()
+            stateStore.excludedFormats.value = emptySet()
+            stateStore.includedStatuses.value = emptySet()
+            stateStore.excludedStatuses.value = emptySet()
+            stateStore.isAdult.value = navArgs.genre == "Hentai"
+            stateStore.page.value = 1
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
-            ChipFilterType.entries.forEach { filterType ->
+            if (_allGenres.value == null) {
                 setAllFilters(
-                    filterType = filterType,
-                    allFilters = when (filterType) {
-                        ChipFilterType.GENRE -> mediaListRepository.fetchMediaGenres(
-                            isAdult = true
-                        ).toSet()
-                        ChipFilterType.FORMAT -> Media.Format.animeFormats().map { it.name }.toSet()
-                        ChipFilterType.STATUS -> Media.Status.entries.map { it.name }.toSet()
-                    }
+                    filterType = ChipFilterType.GENRE,
+                    allFilters = mediaListRepository.fetchMediaGenres(isAdult = true).toSet(),
                 )
             }
-            navArgs.genre?.let {
-                includeFilter(
-                    filterType = ChipFilterType.GENRE,
-                    filter = it
+            if (_allFormats.value == null) {
+                val activeType = MediaType.valueOf(stateStore.mediaType.value)
+                val formats = if (activeType == MediaType.ANIME) {
+                    Media.Format.animeFormats()
+                } else {
+                    Media.Format.mangaFormats()
+                }.map { it.name }.toSet()
+                setAllFilters(filterType = ChipFilterType.FORMAT, allFilters = formats)
+            }
+            if (_allStatuses.value == null) {
+                setAllFilters(
+                    filterType = ChipFilterType.STATUS,
+                    allFilters = Media.Status.entries.map { it.name }.toSet(),
                 )
+            }
+            navArgs.genre?.let { genre ->
+                if (hasExplicitRouteArgs && genre !in includedGenres.value) {
+                    includeFilter(filterType = ChipFilterType.GENRE, filter = genre)
+                }
             }
         }
     }
@@ -193,7 +256,7 @@ class ExploreViewModel @Inject constructor(
         flow2 = seasonYear,
         flow3 = formatSegregation,
         flow4 = statusSegregation,
-        flow5 = isAdult.filterNotNull(),
+        flow5 = isAdult,
         flow6 = mediaType.onEach {
             val mediaType = MediaType.valueOf(it)
             if (mediaType == MediaType.MANGA) {
@@ -206,7 +269,6 @@ class ExploreViewModel @Inject constructor(
                     else -> Media.Format.mangaFormats()
                 }.map { format -> format.name }.toSet()
             )
-            resetFilter(ChipFilterType.FORMAT)
         },
         transform = { genres, seasonYear, format, status, isAdult, type ->
             FilterSheetOptions(
@@ -225,19 +287,19 @@ class ExploreViewModel @Inject constructor(
     val prefs = combine(
         flow = preferencesRepository.isNsfwEnabled.filterNotNull(),
         flow2 = preferencesRepository.language.filterNotNull(),
-        flow3 = preferencesRepository.listSize.filterNotNull(),
-        transform = { isNsfwEnabled, language, listSize ->
-            Prefs(isNsfwEnabled, Media.Language.safeValueOf(language), listSize)
+        flow3 = preferencesRepository.explorePerPage.filterNotNull(),
+        transform = { isNsfwEnabled, language, explorePerPage ->
+            Prefs(isNsfwEnabled, Media.Language.safeValueOf(language), explorePerPage)
         }
     )
 
     val filterStrategy = combine(
-        flow = mediaSort,
+        flow = combine(mediaSort, isLatestEpisodes, ::Pair),
         flow2 = searchQuery,
         flow3 = filterSheetOptions,
         flow4 = page,
         flow5 = prefs,
-        transform = { sort, searchQuery, filterSheetOptions, page, prefs ->
+        transform = { (sort, latestEpisodes), searchQuery, filterSheetOptions, page, prefs ->
             val hasHentaiGenre = "Hentai" in filterSheetOptions.genres.included
             FilterStrategy(
                 mediaType = MediaType.valueOf(filterSheetOptions.mediaType),
@@ -256,6 +318,7 @@ class ExploreViewModel @Inject constructor(
                 isNsfwEnabled = prefs.isNsfwEnabled || !searchQuery.isNullOrBlank() || hasHentaiGenre,
                 language = prefs.language,
                 perPage = prefs.listSize,
+                isLatestEpisodes = latestEpisodes,
             )
         }
     )
@@ -276,21 +339,66 @@ class ExploreViewModel @Inject constructor(
         }
     }.flatMapLatest { (filterStrategy, _) ->
         flow {
-            emit(Resource.loading())
-            val anilistResource = mediaListRepository
-                .fetchMediaMediumList(useNetwork, filterStrategy)
-                .asResource()
-                .firstOrNull()
+            if (filterStrategy.isLatestEpisodes) {
+                emit(Resource.loading())
+                val latest = mediaListRepository
+                    .fetchLatestEpisodesMediumList(useNetwork, filterStrategy)
+                    .asResource()
+                    .firstOrNull()
+                emit(latest)
+                return@flow
+            }
+
             val query = filterStrategy.search?.trim()
+            val hasExtraFilters = filterStrategy.includedGenres != null ||
+                filterStrategy.excludedGenres != null ||
+                filterStrategy.season != null ||
+                filterStrategy.year != null ||
+                filterStrategy.includedFormats != null ||
+                filterStrategy.excludedFormats != null ||
+                filterStrategy.includedStatuses != null ||
+                filterStrategy.excludedStatuses != null
+
             if (!query.isNullOrEmpty() &&
                 filterStrategy.mediaType == MediaType.ANIME &&
                 filterStrategy.page == 1
             ) {
+                if (!useNetwork && !hasExtraFilters) {
+                    val cached = providerSearchHelper.getCachedResults(query)
+                    if (cached != null) {
+                        emit(Resource.success(Page(list = cached, info = null)))
+                        return@flow
+                    }
+                }
+                emit(Resource.loading())
+                val (anilistResource, extraResults) = coroutineScope {
+                    val anilistDeferred = async {
+                        mediaListRepository
+                            .fetchMediaMediumList(useNetwork, filterStrategy)
+                            .asResource()
+                            .firstOrNull()
+                    }
+                    val providerDeferred = async {
+                        providerSearchHelper.fetchProviderAndJikan(query)
+                    }
+                    anilistDeferred.await() to providerDeferred.await()
+                }
                 val baseList = anilistResource?.data?.list.orEmpty()
-                val merged = providerSearchHelper.mergeProviderResults(query, baseList)
+                val merged = providerSearchHelper.mergeAndCachePrefetched(
+                    query = query,
+                    anilistResults = baseList,
+                    providerItems = extraResults.first,
+                    jikanItems = extraResults.second,
+                    cacheResult = !hasExtraFilters,
+                )
                 val mergedPage = anilistResource?.data?.copy(list = merged) ?: Page(list = merged, info = null)
                 emit(Resource.success(mergedPage))
             } else {
+                emit(Resource.loading())
+                val anilistResource = mediaListRepository
+                    .fetchMediaMediumList(useNetwork, filterStrategy)
+                    .asResource()
+                    .firstOrNull()
                 emit(anilistResource)
             }
         }
@@ -305,107 +413,157 @@ class ExploreViewModel @Inject constructor(
     fun getFallbackMeta(mediaId: Int): SearchFallbackMeta? = providerSearchHelper.getFallbackMeta(mediaId)
 
     fun setMediaSort(sort: Media.Sort) {
-        savedStateHandle[Constants.SORT] = sort
+        stateStore.isLatestEpisodes.value = false
+        stateStore.selectedSort.value = sort
     }
 
     fun setIsDescending(isDescending: Boolean) {
-        savedStateHandle[Constants.ORDER] = isDescending
+        stateStore.isLatestEpisodes.value = false
+        stateStore.isDescending.value = isDescending
     }
 
     fun setSearchQuery(searchQuery: String?) {
-        savedStateHandle[SEARCH_QUERY] = searchQuery
+        stateStore.isLatestEpisodes.value = false
+        stateStore.searchQuery.value = searchQuery
     }
 
     fun setMediaType(type: String) {
-        savedStateHandle[Constants.MEDIA_TYPE_FILTER] = type
+        if (stateStore.mediaType.value != type) {
+            stateStore.isLatestEpisodes.value = false
+            stateStore.mediaType.value = type
+            resetFilter(ChipFilterType.FORMAT)
+        }
     }
 
     private fun setAllFilters(filterType: ChipFilterType, allFilters: Set<String>?) {
-        savedStateHandle[Constants._ALL_FILTERS + filterType.tag] = allFilters
-        savedStateHandle[Constants.ALL_FILTERS + filterType.tag] = allFilters
+        when (filterType) {
+            ChipFilterType.GENRE -> {
+                _allGenres.value = allFilters
+                allGenres.value = allFilters
+            }
+            ChipFilterType.FORMAT -> {
+                _allFormats.value = allFilters
+                allFormats.value = allFilters
+            }
+            ChipFilterType.STATUS -> {
+                _allStatuses.value = allFilters
+                allStatuses.value = allStatuses.value ?: allFilters
+            }
+        }
     }
 
     fun includeFilter(filterType: ChipFilterType, filter: String?) {
-        savedStateHandle[Constants.INCLUDED_FILTERS + filterType.tag] = when(filterType) {
-            ChipFilterType.GENRE -> includedGenres
-            ChipFilterType.FORMAT -> includedFormats
-            ChipFilterType.STATUS -> includedStatuses
-        }.value.plus(filter)
-        savedStateHandle[Constants.ALL_FILTERS + filterType.tag] = when(filterType) {
-            ChipFilterType.GENRE -> allGenres
-            ChipFilterType.FORMAT -> allFormats
-            ChipFilterType.STATUS -> allStatuses
-        }.value?.minus(filter)
+        if (filter == null) return
+        stateStore.isLatestEpisodes.value = false
+        when (filterType) {
+            ChipFilterType.GENRE -> {
+                includedGenres.value = includedGenres.value + filter
+                allGenres.value = allGenres.value?.minus(filter)
+            }
+            ChipFilterType.FORMAT -> {
+                includedFormats.value = includedFormats.value + filter
+                allFormats.value = allFormats.value?.minus(filter)
+            }
+            ChipFilterType.STATUS -> {
+                includedStatuses.value = includedStatuses.value + filter
+                allStatuses.value = allStatuses.value?.minus(filter)
+            }
+        }
     }
 
     fun excludeFilter(filterType: ChipFilterType, filter: String?) {
-        savedStateHandle[Constants.EXCLUDED_FILTERS + filterType.tag] = when(filterType) {
-            ChipFilterType.GENRE -> excludedGenres
-            ChipFilterType.FORMAT -> excludedFormats
-            ChipFilterType.STATUS -> excludedStatuses
-        }.value.plus(filter)
-        savedStateHandle[Constants.INCLUDED_FILTERS + filterType.tag] = when(filterType) {
-            ChipFilterType.GENRE -> includedGenres
-            ChipFilterType.FORMAT -> includedFormats
-            ChipFilterType.STATUS -> includedStatuses
-        }.value.minus(filter)
+        if (filter == null) return
+        stateStore.isLatestEpisodes.value = false
+        when (filterType) {
+            ChipFilterType.GENRE -> {
+                excludedGenres.value = excludedGenres.value + filter
+                includedGenres.value = includedGenres.value - filter
+            }
+            ChipFilterType.FORMAT -> {
+                excludedFormats.value = excludedFormats.value + filter
+                includedFormats.value = includedFormats.value - filter
+            }
+            ChipFilterType.STATUS -> {
+                excludedStatuses.value = excludedStatuses.value + filter
+                includedStatuses.value = includedStatuses.value - filter
+            }
+        }
     }
 
     fun clearFilter(filterType: ChipFilterType, filter: String?) {
-        savedStateHandle[Constants.ALL_FILTERS + filterType.tag] = when(filterType) {
-            ChipFilterType.GENRE -> allGenres
-            ChipFilterType.FORMAT -> allFormats
-            ChipFilterType.STATUS -> allStatuses
-        }.value?.plus(filter)
-        savedStateHandle[Constants.EXCLUDED_FILTERS + filterType.tag] = when(filterType) {
-            ChipFilterType.GENRE -> excludedGenres
-            ChipFilterType.FORMAT -> excludedFormats
-            ChipFilterType.STATUS -> excludedStatuses
-        }.value.minus(filter)
+        if (filter == null) return
+        stateStore.isLatestEpisodes.value = false
+        when (filterType) {
+            ChipFilterType.GENRE -> {
+                allGenres.value = allGenres.value?.plus(filter)
+                excludedGenres.value = excludedGenres.value - filter
+            }
+            ChipFilterType.FORMAT -> {
+                allFormats.value = allFormats.value?.plus(filter)
+                excludedFormats.value = excludedFormats.value - filter
+            }
+            ChipFilterType.STATUS -> {
+                allStatuses.value = allStatuses.value?.plus(filter)
+                excludedStatuses.value = excludedStatuses.value - filter
+            }
+        }
     }
 
     fun setMediaSeason(season: String?) {
-        savedStateHandle[Constants.SEASON] = season
+        stateStore.isLatestEpisodes.value = false
+        stateStore.selectedSeason.value = season
     }
 
     fun setMediaYear(year: Int?) {
-        savedStateHandle[Constants.YEAR] = year
+        stateStore.isLatestEpisodes.value = false
+        stateStore.selectedYear.value = year
     }
 
     fun setPage(page: Int) {
-        savedStateHandle[Constants.PAGE] = page
+        stateStore.page.value = page
     }
 
     fun setIsAdult(isAdult: Boolean) {
-        savedStateHandle[Constants.IS_ADULT] = isAdult
+        stateStore.isLatestEpisodes.value = false
+        stateStore.isAdult.value = isAdult
     }
 
     fun resetFilter(filterType: ChipFilterType) {
-        savedStateHandle[Constants.ALL_FILTERS + filterType.tag] = when(filterType) {
-            ChipFilterType.GENRE -> _allGenres
-            ChipFilterType.FORMAT -> _allFormats
-            ChipFilterType.STATUS -> _allStatuses
-        }.value
-        savedStateHandle[Constants.INCLUDED_FILTERS + filterType.tag] = emptySet<String>()
-        savedStateHandle[Constants.EXCLUDED_FILTERS + filterType.tag] = emptySet<String>()
+        stateStore.isLatestEpisodes.value = false
+        when (filterType) {
+            ChipFilterType.GENRE -> {
+                allGenres.value = _allGenres.value
+                includedGenres.value = emptySet()
+                excludedGenres.value = emptySet()
+            }
+            ChipFilterType.FORMAT -> {
+                allFormats.value = _allFormats.value
+                includedFormats.value = emptySet()
+                excludedFormats.value = emptySet()
+            }
+            ChipFilterType.STATUS -> {
+                allStatuses.value = _allStatuses.value
+                includedStatuses.value = emptySet()
+                excludedStatuses.value = emptySet()
+            }
+        }
     }
 
     fun reset() {
-        savedStateHandle[SEARCH_QUERY] = null
-
-        savedStateHandle[Constants.SORT] = Media.Sort.POPULARITY
-        savedStateHandle[Constants.ORDER] = true
-
-        savedStateHandle[Constants.SEASON] = null
-        savedStateHandle[Constants.YEAR] = null
-
-        savedStateHandle[Constants.IS_ADULT] = false
-
+        stateStore.searchQuery.value = null
+        stateStore.selectedSort.value = Media.Sort.POPULARITY
+        stateStore.isDescending.value = true
+        stateStore.selectedSeason.value = null
+        stateStore.selectedYear.value = null
+        stateStore.isAdult.value = false
+        stateStore.isLatestEpisodes.value = false
         ChipFilterType.entries.forEach {
             resetFilter(it)
         }
-
-        savedStateHandle[Constants.PAGE] = 1
+        stateStore.page.value = 1
+        viewModelScope.launch {
+            preferencesRepository.setExplorePerPage(PreferencesRepository.DEFAULT_EXPLORE_PER_PAGE)
+        }
     }
 
     fun refresh(setIsRefreshing: (Boolean) -> Unit) = viewModelScope.launch {
