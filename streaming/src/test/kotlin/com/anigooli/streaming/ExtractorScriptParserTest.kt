@@ -30,7 +30,7 @@ class ExtractorScriptParserTest {
     @Test
     fun `native miruro parser extracts cover url episode count season year and format`() {
         val searchHtml = """
-            <script>items:[{id:"frieren-1",external_ids:{mal:["52991"],anilist:["154587"]},title:{english:"Frieren",romaji:"Sousou no Frieren"},coverImage:"https://example.com/frieren.jpg",episodes:28,seasonYear:2023,format:"TV"}],entityItems:[]</script>
+            <script>items:[{id:"frieren-1",external_ids:{mal:["52991"],anilist:["154587"]},title:{english:"Frieren",romaji:"Sousou no Frieren"},cover_url:"https://example.com/frieren.jpg",episode_count:28,season_year:2023,format:"TV"}],entityItems:[]</script>
         """.trimIndent()
         val searchResults = NativeMiruroParser.parseSearchResponse(searchHtml)
         assertEquals(1, searchResults.size)
