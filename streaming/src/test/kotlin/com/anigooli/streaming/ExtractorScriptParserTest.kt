@@ -34,7 +34,7 @@ class ExtractorScriptParserTest {
         """.trimIndent()
         val searchResults = NativeMiruroParser.parseSearchResponse(searchHtml)
         assertEquals(1, searchResults.size)
-        assertEquals("https://example.com/frieren.jpg", searchResults[0].coverUrl)
+        assertEquals("https://example.com/frieren.jpg", searchResults[0].coverImage)
         assertEquals(28, searchResults[0].episodeCount)
         assertEquals(2023, searchResults[0].seasonYear)
         assertEquals("TV", searchResults[0].format)
