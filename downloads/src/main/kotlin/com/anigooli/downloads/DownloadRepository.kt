@@ -1,6 +1,10 @@
 package com.anigooli.downloads
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -45,6 +49,7 @@ class DownloadRepository @Inject constructor(
         episodeNumber: String,
         audioTrack: AudioTrack,
         source: StreamSource,
+        includeSubtitle: Boolean = true,
     ) = withContext(Dispatchers.IO) {
         val id = episodeDownloadId(anilistId, episodeNumber)
         val animeDir = File(File(context.filesDir, "downloads"), anilistId.toString())
@@ -78,7 +83,7 @@ class DownloadRepository @Inject constructor(
                 origin = source.origin,
                 isHls = source.isHls,
                 audioUrl = source.audioUrl,
-                subtitleUrl = source.subtitleUrl,
+                subtitleUrl = if (includeSubtitle) source.subtitleUrl else null,
                 errorMessage = null,
                 createdAt = System.currentTimeMillis(),
             )
@@ -122,6 +127,59 @@ class DownloadRepository @Inject constructor(
         File(File(context.filesDir, "downloads"), anilistId.toString()).deleteRecursively()
         downloadDao.deleteEpisodesForAnime(anilistId)
         downloadDao.deleteAnime(anilistId)
+    }
+
+    /** Saves a standalone subtitle file to the device Downloads/AniGooli folder and returns the display path. */
+    suspend fun saveSubtitleFile(
+        animeTitle: String,
+        episodeNumber: String,
+        extension: String,
+        content: String,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val safeTitle = animeTitle.replace(Regex("""[^a-zA-Z0-9._ -]"""), "_").trim().ifBlank { "Anime" }
+            val safeEp = episodeNumber.replace(Regex("""[^a-zA-Z0-9._-]"""), "_").ifBlank { "1" }
+            val cleanExt = extension.trimStart('.').ifBlank { "vtt" }.lowercase()
+            val fileName = "${safeTitle}_Ep${safeEp}.$cleanExt"
+            val mimeType = when (cleanExt) {
+                "vtt" -> "text/vtt"
+                "srt" -> "application/x-subrip"
+                else -> "text/plain"
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                    put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/AniGooli")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: error("Failed to create MediaStore download entry")
+                try {
+                    resolver.openOutputStream(uri)?.use { stream ->
+                        stream.write(content.toByteArray(Charsets.UTF_8))
+                    } ?: error("Failed to open output stream for subtitle")
+                    values.clear()
+                    values.put(MediaStore.Downloads.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                } catch (e: Throwable) {
+                    resolver.delete(uri, null, null)
+                    throw e
+                }
+                "Downloads/AniGooli/$fileName"
+            } else {
+                val dir = File(
+                    context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir,
+                    "AniGooli",
+                )
+                dir.mkdirs()
+                val outFile = File(dir, fileName)
+                outFile.writeText(content, Charsets.UTF_8)
+                outFile.absolutePath
+            }
+        }
     }
 
     /** Returns total disk space used by all completed and partial downloads in bytes. */

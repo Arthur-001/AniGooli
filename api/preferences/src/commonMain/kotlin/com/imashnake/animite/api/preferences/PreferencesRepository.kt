@@ -45,6 +45,18 @@ const val CARD_SIZE_LARGE = "LARGE"
 const val CENSORSHIP_UNCENSORED = "UNCENSORED"
 /** Censored anime version preference. */
 const val CENSORSHIP_CENSORED = "CENSORED"
+/** Default subtitle font family key. */
+const val SUBTITLE_FONT_SANS_SERIF = "SANS_SERIF"
+/** Default subtitle font size in sp. */
+const val DEFAULT_SUBTITLE_FONT_SIZE_SP = 16f
+/** Default subtitle vertical position fraction (0 = bottom, 1 = top). */
+const val DEFAULT_SUBTITLE_VERTICAL_POSITION = 0.05f
+/** Default subtitle max width fraction of player width. */
+const val DEFAULT_SUBTITLE_WIDTH_FRACTION = 0.9f
+/** Default subtitle background ARGB color (black). */
+const val DEFAULT_SUBTITLE_BG_COLOR_ARGB = 0xFF000000L
+/** Default subtitle background opacity (0..1). */
+const val DEFAULT_SUBTITLE_BG_OPACITY = 0.65f
 
 /**
  * Stores API-specific state in an on-disk cache, and exposes the values as a Flow.
@@ -386,6 +398,74 @@ class PreferencesRepository internal constructor(
     /** Persists global default anime version preference. */
     suspend fun setDefaultCensorshipVersion(version: String) {
         dataStore.setValue(defaultCensorshipVersionKey, version)
+    }
+
+    private val subtitleFontFamilyKey = stringPreferencesKey("subtitle_font_family")
+    /** Saved subtitle font family identifier. */
+    val subtitleFontFamily = dataStore.getValue(subtitleFontFamilyKey, SUBTITLE_FONT_SANS_SERIF)
+    /** Persists subtitle font family identifier. */
+    suspend fun setSubtitleFontFamily(fontFamily: String) {
+        dataStore.setValue(subtitleFontFamilyKey, fontFamily)
+    }
+
+    private val subtitleFontSizeSpKey = floatPreferencesKey("subtitle_font_size_sp")
+    /** Saved subtitle font size in sp. */
+    val subtitleFontSizeSp = dataStore.getValue(subtitleFontSizeSpKey, DEFAULT_SUBTITLE_FONT_SIZE_SP)
+    /** Persists subtitle font size in sp. */
+    suspend fun setSubtitleFontSizeSp(sizeSp: Float) {
+        dataStore.setValue(subtitleFontSizeSpKey, sizeSp.coerceIn(10f, 48f))
+    }
+
+    private val subtitleVerticalPositionKey = floatPreferencesKey("subtitle_vertical_position")
+    /** Saved subtitle vertical position fraction (0 = bottom, 1 = top). */
+    val subtitleVerticalPosition = dataStore.getValue(
+        subtitleVerticalPositionKey,
+        DEFAULT_SUBTITLE_VERTICAL_POSITION,
+    )
+    /** Persists subtitle vertical position fraction (0 = bottom, 1 = top). */
+    suspend fun setSubtitleVerticalPosition(position: Float) {
+        dataStore.setValue(subtitleVerticalPositionKey, position.coerceIn(0f, 1f))
+    }
+
+    private val subtitleWidthFractionKey = floatPreferencesKey("subtitle_width_fraction")
+    /** Saved subtitle container max width fraction (0.4..1.0). */
+    val subtitleWidthFraction = dataStore.getValue(
+        subtitleWidthFractionKey,
+        DEFAULT_SUBTITLE_WIDTH_FRACTION,
+    )
+    /** Persists subtitle container max width fraction (0.4..1.0). */
+    suspend fun setSubtitleWidthFraction(widthFraction: Float) {
+        dataStore.setValue(subtitleWidthFractionKey, widthFraction.coerceIn(0.4f, 1.0f))
+    }
+
+    private val subtitleBackgroundEnabledKey = booleanPreferencesKey("subtitle_background_enabled")
+    /** Whether subtitle background box is enabled. */
+    val subtitleBackgroundEnabled = dataStore.getValue(subtitleBackgroundEnabledKey, true)
+    /** Persists whether subtitle background box is enabled. */
+    suspend fun setSubtitleBackgroundEnabled(enabled: Boolean) {
+        dataStore.setValue(subtitleBackgroundEnabledKey, enabled)
+    }
+
+    private val subtitleBackgroundColorArgbKey = longPreferencesKey("subtitle_background_color_argb")
+    /** Saved subtitle background ARGB color as Long. */
+    val subtitleBackgroundColorArgb = dataStore.getValue(
+        subtitleBackgroundColorArgbKey,
+        DEFAULT_SUBTITLE_BG_COLOR_ARGB,
+    )
+    /** Persists subtitle background ARGB color as Long. */
+    suspend fun setSubtitleBackgroundColorArgb(argb: Long) {
+        dataStore.setValue(subtitleBackgroundColorArgbKey, argb)
+    }
+
+    private val subtitleBackgroundOpacityKey = floatPreferencesKey("subtitle_background_opacity")
+    /** Saved subtitle background opacity (0..1). */
+    val subtitleBackgroundOpacity = dataStore.getValue(
+        subtitleBackgroundOpacityKey,
+        DEFAULT_SUBTITLE_BG_OPACITY,
+    )
+    /** Persists subtitle background opacity (0..1). */
+    suspend fun setSubtitleBackgroundOpacity(opacity: Float) {
+        dataStore.setValue(subtitleBackgroundOpacityKey, opacity.coerceIn(0f, 1f))
     }
     // endregion
 

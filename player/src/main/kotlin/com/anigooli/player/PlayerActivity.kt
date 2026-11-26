@@ -242,6 +242,8 @@ private fun PlayerScreen(
     var showQualitySheet by remember { mutableStateOf(false) }
     var showAudioSubSheet by remember { mutableStateOf(false) }
     var showSpeedSheet by remember { mutableStateOf(false) }
+    var showSubtitleStylePanel by remember { mutableStateOf(false) }
+    var showDownloadSheet by remember { mutableStateOf(false) }
 
     var activeHud by remember { mutableStateOf<GestureHudType?>(null) }
     var seekPreviewMs by remember { mutableLongStateOf(0L) }
@@ -615,41 +617,26 @@ private fun PlayerScreen(
             }
         }
 
-        // Compose subtitle overlay (renders parsed VTT/SRT/ASS cues reliably)
-        if (state.subtitlesEnabled && state.subtitleCues.isNotEmpty() && !isInPipMode) {
-            val activeLines = remember(currentPosMs, state.subtitleCues) {
-                SubtitleParser.activeCueTexts(state.subtitleCues, currentPosMs)
-            }
-            if (activeLines.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(
-                            start = 28.dp,
-                            end = 28.dp,
-                            bottom = if (showControls) 88.dp else 24.dp,
-                        ),
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.Black.copy(alpha = 0.65f),
-                    ) {
-                        Text(
-                            text = activeLines.joinToString("\n"),
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
-                    }
+        // Compose subtitle overlay (renders parsed VTT/SRT/ASS cues + live style preview)
+        if (((state.subtitlesEnabled && state.subtitleCues.isNotEmpty()) || showSubtitleStylePanel) && !isInPipMode) {
+            val activeLines = remember(currentPosMs, state.subtitleCues, state.subtitlesEnabled) {
+                if (state.subtitlesEnabled) {
+                    SubtitleParser.activeCueTexts(state.subtitleCues, currentPosMs)
+                } else {
+                    emptyList()
                 }
             }
+            SubtitleOverlay(
+                lines = activeLines,
+                style = state.subtitleStyle,
+                showControls = showControls,
+                isPreviewMode = showSubtitleStylePanel,
+            )
         }
 
         // Controls Overlay
         AnimatedVisibility(
-            visible = showControls && !isInPipMode,
+            visible = showControls && !isInPipMode && !showSubtitleStylePanel,
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
@@ -705,7 +692,7 @@ private fun PlayerScreen(
                     },
                     onLock = { isLocked = true },
                     onPip = onEnterPip,
-                    onDownload = viewModel::downloadCurrentEpisode,
+                    onDownload = { showDownloadSheet = true },
                     onOpenMpv = {
                         exoPlayer.pause()
                         if (!viewModel.openInMpv()) {
@@ -714,6 +701,7 @@ private fun PlayerScreen(
                     },
                     onOpenQuality = { showQualitySheet = true },
                     onOpenAudioSubs = { showAudioSubSheet = true },
+                    onOpenSubtitleStyle = { showSubtitleStylePanel = true },
                     onOpenSpeed = { showSpeedSheet = true },
                     onCycleAspect = {
                         pinchScale = 1f
@@ -722,6 +710,41 @@ private fun PlayerScreen(
                 )
             }
         }
+
+        if (showSubtitleStylePanel && !isInPipMode) {
+            SubtitleStylePanel(
+                style = state.subtitleStyle,
+                onFontFamilyChange = viewModel::setSubtitleFontFamily,
+                onFontSizeChange = viewModel::setSubtitleFontSize,
+                onVerticalPositionChange = viewModel::setSubtitleVerticalPosition,
+                onWidthFractionChange = viewModel::setSubtitleWidthFraction,
+                onBackgroundEnabledChange = viewModel::setSubtitleBackgroundEnabled,
+                onBackgroundColorChange = viewModel::setSubtitleBackgroundColor,
+                onBackgroundOpacityChange = viewModel::setSubtitleBackgroundOpacity,
+                onReset = viewModel::resetSubtitleStyle,
+                onDismiss = { showSubtitleStylePanel = false },
+            )
+        }
+    }
+
+    if (showDownloadSheet) {
+        val hasSub = !state.selectedSource?.subtitleUrl.isNullOrBlank() || state.subtitleCues.isNotEmpty()
+        DownloadOptionsSheet(
+            hasSubtitle = hasSub,
+            onDownloadBoth = {
+                showDownloadSheet = false
+                viewModel.downloadCurrentEpisode(includeSubtitle = true)
+            },
+            onDownloadVideoOnly = {
+                showDownloadSheet = false
+                viewModel.downloadCurrentEpisode(includeSubtitle = false)
+            },
+            onDownloadSubtitleOnly = {
+                showDownloadSheet = false
+                viewModel.downloadSubtitleOnly()
+            },
+            onDismiss = { showDownloadSheet = false },
+        )
     }
 
     if (showQualitySheet) {
@@ -746,6 +769,10 @@ private fun PlayerScreen(
                 viewModel.switchAudioTrack(track, exoPlayer.currentPosition)
             },
             onToggleSubtitles = viewModel::setSubtitlesEnabled,
+            onOpenSubtitleStyle = {
+                showAudioSubSheet = false
+                showSubtitleStylePanel = true
+            },
             onDismiss = { showAudioSubSheet = false },
         )
     }
@@ -782,6 +809,7 @@ private fun PlayerControlsOverlay(
     onOpenMpv: () -> Unit,
     onOpenQuality: () -> Unit,
     onOpenAudioSubs: () -> Unit,
+    onOpenSubtitleStyle: () -> Unit,
     onOpenSpeed: () -> Unit,
     onCycleAspect: () -> Unit,
 ) {
@@ -936,6 +964,10 @@ private fun PlayerControlsOverlay(
                     onClick = onOpenAudioSubs,
                 )
                 ControlPillButton(
+                    label = "Sub Style",
+                    onClick = onOpenSubtitleStyle,
+                )
+                ControlPillButton(
                     label = "${state.playbackSpeed}x",
                     onClick = onOpenSpeed,
                 )
@@ -1007,6 +1039,7 @@ private fun AudioSubPickerSheet(
     isLocalFile: Boolean,
     onSelectAudio: (AudioTrack) -> Unit,
     onToggleSubtitles: (Boolean) -> Unit,
+    onOpenSubtitleStyle: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -1042,6 +1075,12 @@ private fun AudioSubPickerSheet(
             ) {
                 Text("English Subtitles", style = MaterialTheme.typography.bodyLarge)
                 Switch(checked = subtitlesEnabled, onCheckedChange = onToggleSubtitles)
+            }
+            OutlinedButton(
+                onClick = onOpenSubtitleStyle,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Customize Subtitle Style")
             }
         }
     }

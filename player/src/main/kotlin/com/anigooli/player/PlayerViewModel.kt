@@ -14,13 +14,20 @@ import com.anigooli.streaming.ExtractorConfig
 import com.anigooli.streaming.QualitySelector
 import com.anigooli.streaming.StreamSource
 import com.anigooli.streaming.StreamingRepository
+import com.imashnake.animite.api.preferences.DEFAULT_SUBTITLE_BG_COLOR_ARGB
+import com.imashnake.animite.api.preferences.DEFAULT_SUBTITLE_BG_OPACITY
+import com.imashnake.animite.api.preferences.DEFAULT_SUBTITLE_FONT_SIZE_SP
+import com.imashnake.animite.api.preferences.DEFAULT_SUBTITLE_VERTICAL_POSITION
+import com.imashnake.animite.api.preferences.DEFAULT_SUBTITLE_WIDTH_FRACTION
 import com.imashnake.animite.api.preferences.PreferencesRepository
+import com.imashnake.animite.api.preferences.SUBTITLE_FONT_SANS_SERIF
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -38,6 +45,30 @@ enum class VideoAspectMode(val label: String, val media3ResizeMode: Int) {
     FILL("Fill", AspectRatioFrameLayout.RESIZE_MODE_FILL),
     ZOOM("Zoom", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
 }
+
+/** Available subtitle font families. */
+enum class SubtitleFontOption(val id: String, val label: String) {
+    SANS_SERIF("SANS_SERIF", "Sans Serif"),
+    SERIF("SERIF", "Serif"),
+    MONOSPACE("MONOSPACE", "Monospace"),
+    CURSIVE("CURSIVE", "Cursive");
+
+    companion object {
+        fun fromId(id: String): SubtitleFontOption =
+            entries.firstOrNull { it.id == id } ?: SANS_SERIF
+    }
+}
+
+/** Persistent real-time subtitle appearance configuration. */
+data class SubtitleStyleConfig(
+    val fontFamilyId: String = SUBTITLE_FONT_SANS_SERIF,
+    val fontSizeSp: Float = DEFAULT_SUBTITLE_FONT_SIZE_SP,
+    val verticalPosition: Float = DEFAULT_SUBTITLE_VERTICAL_POSITION,
+    val widthFraction: Float = DEFAULT_SUBTITLE_WIDTH_FRACTION,
+    val backgroundEnabled: Boolean = true,
+    val backgroundColorArgb: Long = DEFAULT_SUBTITLE_BG_COLOR_ARGB,
+    val backgroundOpacity: Float = DEFAULT_SUBTITLE_BG_OPACITY,
+)
 
 /** Reactive UI state for the in-app Media3 gesture player. */
 data class PlayerUiState(
@@ -87,6 +118,10 @@ data class PlayerUiState(
     val preBufferState: PreBufferState = PreBufferState(),
     /** Parsed timed subtitle cues for the active video. */
     val subtitleCues: List<SubtitleCue> = emptyList(),
+    /** Raw subtitle text cached for standalone subtitle download. */
+    val rawSubtitleText: String? = null,
+    /** Live-editable, persisted subtitle styling configuration. */
+    val subtitleStyle: SubtitleStyleConfig = SubtitleStyleConfig(),
 )
 
 /** ViewModel orchestrating per-anime audio/sub memory, single-slot pre-buffering, quality switching, and downloads. */
@@ -120,6 +155,29 @@ class PlayerViewModel @Inject constructor(
                 if (payload != null) {
                     initializeFromPayload(payload)
                 }
+            }
+        }
+        viewModelScope.launch {
+            combine(
+                preferencesRepository.subtitleFontFamily,
+                preferencesRepository.subtitleFontSizeSp,
+                preferencesRepository.subtitleVerticalPosition,
+                preferencesRepository.subtitleWidthFraction,
+                preferencesRepository.subtitleBackgroundEnabled,
+                preferencesRepository.subtitleBackgroundColorArgb,
+                preferencesRepository.subtitleBackgroundOpacity,
+            ) { values ->
+                SubtitleStyleConfig(
+                    fontFamilyId = (values[0] as? String) ?: SUBTITLE_FONT_SANS_SERIF,
+                    fontSizeSp = (values[1] as? Float) ?: DEFAULT_SUBTITLE_FONT_SIZE_SP,
+                    verticalPosition = (values[2] as? Float) ?: DEFAULT_SUBTITLE_VERTICAL_POSITION,
+                    widthFraction = (values[3] as? Float) ?: DEFAULT_SUBTITLE_WIDTH_FRACTION,
+                    backgroundEnabled = (values[4] as? Boolean) ?: true,
+                    backgroundColorArgb = (values[5] as? Long) ?: DEFAULT_SUBTITLE_BG_COLOR_ARGB,
+                    backgroundOpacity = (values[6] as? Float) ?: DEFAULT_SUBTITLE_BG_OPACITY,
+                )
+            }.collect { style ->
+                _uiState.update { it.copy(subtitleStyle = style) }
             }
         }
     }
@@ -156,6 +214,7 @@ class PlayerViewModel @Inject constructor(
             subtitlesEnabled = resolvedSubs,
             isDubFallback = bundle?.isDubFallback == true,
             targetSeekPositionMs = resumePos,
+            subtitleStyle = _uiState.value.subtitleStyle,
         )
 
         if (!payload.isLocalFile && activeSource != null && payload.anilistId != null) {
@@ -290,8 +349,69 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** Enqueues a full local download of the active episode, reusing any pre-buffered data. */
-    fun downloadCurrentEpisode() {
+    /** Updates subtitle font family in real time and persists to preferences. */
+    fun setSubtitleFontFamily(fontFamilyId: String) {
+        _uiState.update { it.copy(subtitleStyle = it.subtitleStyle.copy(fontFamilyId = fontFamilyId)) }
+        viewModelScope.launch { preferencesRepository.setSubtitleFontFamily(fontFamilyId) }
+    }
+
+    /** Updates subtitle font size in sp in real time and persists to preferences. */
+    fun setSubtitleFontSize(sizeSp: Float) {
+        val clamped = sizeSp.coerceIn(10f, 48f)
+        _uiState.update { it.copy(subtitleStyle = it.subtitleStyle.copy(fontSizeSp = clamped)) }
+        viewModelScope.launch { preferencesRepository.setSubtitleFontSizeSp(clamped) }
+    }
+
+    /** Updates subtitle vertical position (0 = bottom, 1 = top) in real time and persists. */
+    fun setSubtitleVerticalPosition(position: Float) {
+        val clamped = position.coerceIn(0f, 1f)
+        _uiState.update { it.copy(subtitleStyle = it.subtitleStyle.copy(verticalPosition = clamped)) }
+        viewModelScope.launch { preferencesRepository.setSubtitleVerticalPosition(clamped) }
+    }
+
+    /** Updates subtitle width fraction (0.4..1.0) in real time and persists. */
+    fun setSubtitleWidthFraction(widthFraction: Float) {
+        val clamped = widthFraction.coerceIn(0.4f, 1.0f)
+        _uiState.update { it.copy(subtitleStyle = it.subtitleStyle.copy(widthFraction = clamped)) }
+        viewModelScope.launch { preferencesRepository.setSubtitleWidthFraction(clamped) }
+    }
+
+    /** Toggles whether subtitle background is shown in real time and persists. */
+    fun setSubtitleBackgroundEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(subtitleStyle = it.subtitleStyle.copy(backgroundEnabled = enabled)) }
+        viewModelScope.launch { preferencesRepository.setSubtitleBackgroundEnabled(enabled) }
+    }
+
+    /** Updates subtitle background ARGB color in real time and persists. */
+    fun setSubtitleBackgroundColor(argb: Long) {
+        _uiState.update { it.copy(subtitleStyle = it.subtitleStyle.copy(backgroundColorArgb = argb)) }
+        viewModelScope.launch { preferencesRepository.setSubtitleBackgroundColorArgb(argb) }
+    }
+
+    /** Updates subtitle background opacity (0..1) in real time and persists. */
+    fun setSubtitleBackgroundOpacity(opacity: Float) {
+        val clamped = opacity.coerceIn(0f, 1f)
+        _uiState.update { it.copy(subtitleStyle = it.subtitleStyle.copy(backgroundOpacity = clamped)) }
+        viewModelScope.launch { preferencesRepository.setSubtitleBackgroundOpacity(clamped) }
+    }
+
+    /** Resets all subtitle style settings to their default values and persists. */
+    fun resetSubtitleStyle() {
+        val defaults = SubtitleStyleConfig()
+        _uiState.update { it.copy(subtitleStyle = defaults) }
+        viewModelScope.launch {
+            preferencesRepository.setSubtitleFontFamily(defaults.fontFamilyId)
+            preferencesRepository.setSubtitleFontSizeSp(defaults.fontSizeSp)
+            preferencesRepository.setSubtitleVerticalPosition(defaults.verticalPosition)
+            preferencesRepository.setSubtitleWidthFraction(defaults.widthFraction)
+            preferencesRepository.setSubtitleBackgroundEnabled(defaults.backgroundEnabled)
+            preferencesRepository.setSubtitleBackgroundColorArgb(defaults.backgroundColorArgb)
+            preferencesRepository.setSubtitleBackgroundOpacity(defaults.backgroundOpacity)
+        }
+    }
+
+    /** Enqueues a local download of the active episode (video + optional subtitle), reusing pre-buffer. */
+    fun downloadCurrentEpisode(includeSubtitle: Boolean = true) {
         val current = _uiState.value
         val source = current.selectedSource ?: return
         val anilistId = current.anilistId ?: return
@@ -303,9 +423,52 @@ class PlayerViewModel @Inject constructor(
                 episodeNumber = current.episode,
                 audioTrack = current.audioTrack,
                 source = source,
+                includeSubtitle = includeSubtitle,
             )
+            val label = if (includeSubtitle && !source.subtitleUrl.isNullOrBlank()) {
+                "Downloading video & subtitle"
+            } else {
+                "Downloading video"
+            }
             _uiState.update {
-                it.copy(statusBanner = "Download started (reusing pre-buffer)")
+                it.copy(statusBanner = "$label (reusing pre-buffer)")
+            }
+        }
+    }
+
+    /** Downloads only the active episode's subtitle file into the device Downloads/AniGooli folder. */
+    fun downloadSubtitleOnly() {
+        val current = _uiState.value
+        viewModelScope.launch {
+            val subUrl = current.selectedSource?.subtitleUrl?.takeIf { it.isNotBlank() }
+            val ext = detectSubtitleExtension(subUrl ?: current.localSubtitlePath.orEmpty())
+            val rawText = current.rawSubtitleText?.takeIf { it.isNotBlank() } ?: withContext(Dispatchers.IO) {
+                if (current.isLocalFile) {
+                    val path = current.localSubtitlePath?.takeIf { it.isNotBlank() } ?: return@withContext null
+                    runCatching { File(path).readText(Charsets.UTF_8) }.getOrNull()
+                } else {
+                    val source = current.selectedSource ?: return@withContext null
+                    val url = subUrl ?: return@withContext null
+                    fetchSubtitleText(url, current.userAgent, source.referer, source.origin)
+                        ?: fetchSubtitleText(url, current.userAgent, "", "")
+                }
+            }
+            if (rawText.isNullOrBlank()) {
+                _uiState.update { it.copy(statusBanner = "No subtitle available to download") }
+                return@launch
+            }
+            val result = downloadRepository.saveSubtitleFile(
+                animeTitle = current.animeTitle,
+                episodeNumber = current.episode,
+                extension = ext,
+                content = rawText,
+            )
+            result.onSuccess { savedPath ->
+                _uiState.update { it.copy(statusBanner = "Subtitle saved to $savedPath") }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(statusBanner = "Subtitle download failed: ${err.message ?: "Error"}")
+                }
             }
         }
     }
@@ -397,14 +560,16 @@ class PlayerViewModel @Inject constructor(
         subtitleLoadJob?.cancel()
         val current = _uiState.value
         subtitleLoadJob = viewModelScope.launch {
-            val cues = withContext(Dispatchers.IO) {
+            val (rawText, cues) = withContext(Dispatchers.IO) {
                 if (current.isLocalFile) {
-                    val path = current.localSubtitlePath?.takeIf { it.isNotBlank() } ?: return@withContext emptyList()
-                    runCatching { SubtitleParser.parse(File(path).readText(Charsets.UTF_8)) }
-                        .getOrDefault(emptyList())
+                    val path = current.localSubtitlePath?.takeIf { it.isNotBlank() }
+                        ?: return@withContext (null to emptyList())
+                    val text = runCatching { File(path).readText(Charsets.UTF_8) }.getOrNull()
+                    text to (text?.let { SubtitleParser.parse(it) } ?: emptyList())
                 } else {
-                    val source = current.selectedSource ?: return@withContext emptyList()
-                    val subUrl = source.subtitleUrl?.takeIf { it.isNotBlank() } ?: return@withContext emptyList()
+                    val source = current.selectedSource ?: return@withContext (null to emptyList())
+                    val subUrl = source.subtitleUrl?.takeIf { it.isNotBlank() }
+                        ?: return@withContext (null to emptyList())
                     val raw = fetchSubtitleText(
                         url = subUrl,
                         userAgent = current.userAgent,
@@ -416,10 +581,24 @@ class PlayerViewModel @Inject constructor(
                         referer = "",
                         origin = "",
                     )
-                    if (raw.isNullOrBlank()) emptyList() else SubtitleParser.parse(raw)
+                    if (raw.isNullOrBlank()) {
+                        null to emptyList()
+                    } else {
+                        raw to SubtitleParser.parse(raw)
+                    }
                 }
             }
-            _uiState.update { it.copy(subtitleCues = cues) }
+            _uiState.update { it.copy(subtitleCues = cues, rawSubtitleText = rawText) }
+        }
+    }
+
+    private fun detectSubtitleExtension(urlOrPath: String): String {
+        val lower = urlOrPath.lowercase()
+        return when {
+            lower.contains(".srt") -> "srt"
+            lower.contains(".ass") -> "ass"
+            lower.contains(".ssa") -> "ssa"
+            else -> "vtt"
         }
     }
 
