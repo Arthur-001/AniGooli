@@ -39,16 +39,21 @@ class ExternalPlayerLauncher @Inject constructor(
         val videoUri: Uri = if (isLocalFile) {
             FileProvider.getUriForFile(context, authority, File(urlOrPath))
         } else {
-            val needsProxy = referer.isNotBlank() || origin.isNotBlank()
-            val effectiveUrl = if (needsProxy) {
-                headerProxy.registerStream(
+            val effectiveUrl = when {
+                !audioUrl.isNullOrBlank() -> headerProxy.registerCombinedHlsStream(
+                    videoUrl = urlOrPath,
+                    audioUrl = audioUrl,
+                    referer = referer,
+                    origin = origin,
+                    userAgent = ExtractorConfig.DEFAULT_USER_AGENT,
+                )
+                referer.isNotBlank() || origin.isNotBlank() -> headerProxy.registerStream(
                     targetUrl = urlOrPath,
                     referer = referer,
                     origin = origin,
                     userAgent = ExtractorConfig.DEFAULT_USER_AGENT,
                 )
-            } else {
-                urlOrPath
+                else -> urlOrPath
             }
             Uri.parse(effectiveUrl)
         }
@@ -74,14 +79,6 @@ class ExternalPlayerLauncher @Inject constructor(
                 }
                 putExtra("subs", arrayOf(subUri))
                 putExtra("subs.enable", arrayOf(subUri))
-            }
-            if (!audioUrl.isNullOrBlank()) {
-                val effAudio = if (referer.isNotBlank() || origin.isNotBlank()) {
-                    headerProxy.registerStream(audioUrl, referer, origin)
-                } else {
-                    audioUrl
-                }
-                putExtra("audio", Uri.parse(effAudio))
             }
         }
 

@@ -1,5 +1,6 @@
 package com.imashnake.animite.explore.searchbar
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,14 +37,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import com.anigooli.streaming.ProviderAnime
 import com.imashnake.animite.api.anilist.type.MediaType
 import com.imashnake.animite.core.ui.LocalPaddings
 import com.imashnake.animite.core.ui.ext.copy
-import com.imashnake.animite.explore.R
 import com.imashnake.animite.explore.MediaMediumList
+import com.imashnake.animite.explore.R
 import com.imashnake.animite.navigation.R as navigationR
 
 /**
@@ -50,7 +54,7 @@ import com.imashnake.animite.navigation.R as navigationR
  *
  * @param hasExtraPadding if the search bar should have extra bottom padding to accommodate the
  * [com.imashnake.animite.navigation.NavigationBar].
- * @param onItemClick called when media with an ID and [MediaType] is clicked.
+ * @param onItemClick called when media with an ID, [MediaType], and optional [ProviderAnime] is clicked.
  * @param modifier the [Modifier] to be applied to this Front Drop.
  * @param viewModel [SearchViewModel] instance.
  */
@@ -59,10 +63,10 @@ import com.imashnake.animite.navigation.R as navigationR
 fun SearchFrontDrop(
     hasExtraPadding: Boolean,
     isFabVisible: Boolean,
-    onItemClick: (Int, MediaType) -> Unit,
+    onItemClick: (Int, MediaType, ProviderAnime?) -> Unit,
     modifier: Modifier = Modifier,
     contentWindowInsets: WindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
-    viewModel: SearchViewModel = viewModel()
+    viewModel: SearchViewModel = hiltViewModel()
 ) {
     val insetPaddingValues = contentWindowInsets.asPaddingValues()
     val insetPaddingValuesForSearchBar = contentWindowInsets
@@ -70,10 +74,22 @@ fun SearchFrontDrop(
         .asPaddingValues()
 
     val searchMediaType = MediaType.ANIME
-    viewModel.setMediaType(searchMediaType)
+    LaunchedEffect(searchMediaType) {
+        viewModel.setMediaType(searchMediaType)
+    }
     val searchList by viewModel.searchList.collectAsState()
+    val currentQuery by viewModel.queryState.collectAsState()
+    val cardSize by viewModel.cardSize.collectAsState()
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     var isExpanded by rememberSaveable { mutableStateOf(false) }
+    val hasQuery = !currentQuery.isNullOrBlank()
+    val showOverlay = isFabVisible && (isExpanded || hasQuery)
+
+    BackHandler(enabled = isFabVisible && !isExpanded && hasQuery) {
+        viewModel.setQuery(null)
+    }
+
     val searchBarBottomPadding by animateDpAsState(
         targetValue = if (hasExtraPadding) {
             dimensionResource(navigationR.dimen.navigation_bar_height)
@@ -82,9 +98,9 @@ fun SearchFrontDrop(
     )
     val frontDropColor by animateColorAsState(
         targetValue = MaterialTheme.colorScheme.background.copy(
-            alpha = if (isExpanded) 0.95f else 0f
+            alpha = if (showOverlay) 0.95f else 0f
         ),
-        animationSpec = tween(750, 250),
+        animationSpec = tween(400),
         label = "show_front_drop"
     )
 
@@ -96,18 +112,19 @@ fun SearchFrontDrop(
 
     searchList.data?.let {
         AnimatedVisibility(
-            visible = it.isNotEmpty() || isExpanded,
+            visible = isFabVisible && (it.isNotEmpty() || isExpanded),
             enter = fadeIn(tween(500)),
             exit = fadeOut(tween(500)),
         ) {
             MediaMediumList(
                 mediaMediumList = it,
                 onItemClick = { id ->
+                    keyboardController?.hide()
                     isExpanded = false
-                    viewModel.setQuery(null)
-                    onItemClick(id, searchMediaType)
+                    onItemClick(id, searchMediaType, viewModel.getProviderEntry(id))
                 },
                 shouldShowRank = false,
+                cardSize = cardSize,
                 modifier = Modifier
                     .imeNestedScroll()
                     .consumeWindowInsets(
@@ -141,7 +158,10 @@ fun SearchFrontDrop(
         SearchFab(
             isExpanded = isExpanded,
             setExpanded = { isExpanded = it },
-            onSearched = viewModel::setQuery,
+            query = currentQuery.orEmpty(),
+            onQueryChange = { viewModel.setQuery(it.ifEmpty { null }) },
+            onMinimize = { isExpanded = false },
+            onClear = { viewModel.setQuery(null) },
         )
     }
 }

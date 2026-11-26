@@ -96,6 +96,12 @@ object NativeMiruroParser {
             val nat = matchStringProp(titleSlice, "native")
             val display = eng.ifEmpty { rom.ifEmpty { nat } }
             if (display.isEmpty()) continue
+            val cover = matchStringProp(item, "extraLarge")
+                .ifEmpty { matchStringProp(item, "large") }
+                .ifEmpty { matchStringProp(item, "poster") }
+                .ifEmpty { matchStringProp(item, "image") }
+                .ifEmpty { matchStringProp(item, "cover") }
+                .takeIf { it.startsWith("http") }
             results.add(
                 ProviderAnime(
                     providerId = providerId,
@@ -104,6 +110,7 @@ object NativeMiruroParser {
                     title = display,
                     englishTitle = eng.ifEmpty { null },
                     romajiTitle = rom.ifEmpty { null },
+                    coverImage = cover,
                 )
             )
         }

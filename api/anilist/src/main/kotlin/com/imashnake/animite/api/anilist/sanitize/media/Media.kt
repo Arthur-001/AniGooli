@@ -256,7 +256,8 @@ data class Media(
                     title = match?.groups[2]?.value?.lowercase(),
                     thumbnail = it.thumbnail,
                     url = it.url,
-                    site = it.site
+                    site = it.site,
+                    displayTitle = match?.groups[2]?.value?.trim(),
                 )
             }.toImmutableList()
         }
@@ -635,6 +636,7 @@ data class Media(
         val thumbnail: String,
         val url: String,
         val site: String?,
+        val displayTitle: String? = null,
     )
 
     internal constructor(

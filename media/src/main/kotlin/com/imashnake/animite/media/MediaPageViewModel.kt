@@ -11,14 +11,19 @@ import com.anigooli.downloads.DownloadEpisodeEntity
 import com.anigooli.downloads.DownloadRepository
 import com.anigooli.library.LibraryRepository
 import com.anigooli.streaming.AudioTrack
+import com.anigooli.streaming.CensorshipVersion
 import com.anigooli.streaming.EpisodePlayerNavigator
+import com.anigooli.streaming.JikanAnimeInfo
+import com.anigooli.streaming.JikanMetadataClient
 import com.anigooli.streaming.QualitySelector
+import com.anigooli.streaming.ResolvedAnimeVersions
 import com.anigooli.streaming.StreamingRepository
 import com.imashnake.animite.api.anilist.AnilistMediaRepository
 import com.imashnake.animite.api.anilist.FranchiseResolver
 import com.imashnake.animite.api.anilist.OrganizedFranchise
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.type.MediaType
+import com.imashnake.animite.api.preferences.CENSORSHIP_UNCENSORED
 import com.imashnake.animite.api.preferences.MANGA_SORT_NEWEST_FIRST
 import com.imashnake.animite.api.preferences.MANGA_SORT_OLDEST_FIRST
 import com.imashnake.animite.api.preferences.PLAYER_MPV
@@ -27,6 +32,8 @@ import com.imashnake.animite.core.resource.Resource
 import com.imashnake.animite.core.resource.Resource.Companion.asResource
 import com.imashnake.animite.core.ui.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +44,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -52,8 +60,12 @@ data class StreamingEpisodesUiState(
     val isLoading: Boolean = false,
     /** Provider show ID if matched. */
     val providerId: String? = null,
+    /** Available uncensored/censored provider entries when resolved. */
+    val availableVersions: ResolvedAnimeVersions? = null,
     /** Available episode strings (e.g. ["1", "2", ...]). */
     val episodes: List<String> = emptyList(),
+    /** Optional episode title map keyed by episode number string. */
+    val episodeTitles: Map<String, String> = emptyMap(),
     /** Episode currently being resolved to launch playback/download. */
     val busyEpisode: String? = null,
     /** Non-null error message when stream or episode lookup fails. */
@@ -70,6 +82,7 @@ class MediaPageViewModel @Inject constructor(
     private val mediaRepository: AnilistMediaRepository,
     private val franchiseResolver: FranchiseResolver,
     private val streamingRepository: StreamingRepository,
+    private val jikanMetadataClient: JikanMetadataClient,
     private val downloadRepository: DownloadRepository,
     private val libraryRepository: LibraryRepository,
     private val playerNavigator: EpisodePlayerNavigator,
@@ -79,6 +92,8 @@ class MediaPageViewModel @Inject constructor(
     private val navArgs = savedStateHandle.toRoute<MediaPage>()
     private val parsedMediaType = MediaType.safeValueOf(navArgs.mediaType)
     private val refreshTrigger = MutableSharedFlow<Unit>()
+    private val loadedJikanEpisodePages = HashSet<Int>()
+    private var resolvedMalId: Int? = navArgs.malId?.takeIf { it > 0 }
 
     /** Navigation source tag for shared element transitions. */
     val source = savedStateHandle.getStateFlow(Constants.SOURCE, navArgs.source)
@@ -119,26 +134,54 @@ class MediaPageViewModel @Inject constructor(
         perAnime?.subtitlesEnabled ?: globalDefault ?: true
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), true)
 
+    /** Persisted preference controlling whether episode names appear alongside episode numbers. */
+    val showEpisodeNames: StateFlow<Boolean> = preferencesRepository.showEpisodeNames
+        .map { it ?: false }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), false)
+
+    /** Remembered censorship version for this anime, defaulting to [CensorshipVersion.UNCENSORED]. */
+    val censorshipVersion: StateFlow<CensorshipVersion> = combine(
+        libraryRepository.observePlaybackPrefs(navArgs.id),
+        preferencesRepository.defaultCensorshipVersion,
+    ) { perAnime, globalDefault ->
+        CensorshipVersion.safeValueOf(perAnime?.censorshipVersion ?: globalDefault ?: CENSORSHIP_UNCENSORED)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), CensorshipVersion.UNCENSORED)
+
+    /** Last watched episode string for this anime if recorded. */
+    val lastWatchedEpisode: StateFlow<String?> = libraryRepository.observePlaybackPrefs(navArgs.id)
+        .map { it?.lastEpisode }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), null)
+
     /** Active and completed downloads mapped by episode number for quick inline status indicators. */
     val downloadsByEpisode: StateFlow<Map<String, DownloadEpisodeEntity>> =
         downloadRepository.observeEpisodesForAnime(navArgs.id)
             .map { list -> list.associateBy { it.episodeNumber } }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyMap())
 
-    /** Detailed media resource from AniList. */
+    /** Detailed media resource from AniList, or Jikan fallback for provider-only entries. */
     val media = combine(
         flow = refreshTrigger.onStart { emit(Unit) },
         flow2 = preferencesRepository.language.filterNotNull(),
         flow3 = preferencesRepository.listSize.filterNotNull(),
         transform = ::Triple,
     ).flatMapLatest { (_, language, listSize) ->
-        mediaRepository.fetchMedia(
-            id = navArgs.id,
-            mediaType = parsedMediaType,
-            perPage = listSize,
-            language = Media.Language.safeValueOf(language),
-        )
-    }.asResource().stateIn(
+        if (navArgs.id > 0) {
+            mediaRepository.fetchMedia(
+                id = navArgs.id,
+                mediaType = parsedMediaType,
+                perPage = listSize,
+                language = Media.Language.safeValueOf(language),
+            ).asResource()
+        } else {
+            flow {
+                emit(Resource.loading())
+                val jikanInfo = navArgs.malId?.takeIf { it > 0 }?.let { jikanMetadataClient.fetchByMalId(it) }
+                    ?: navArgs.fallbackTitle?.let { q -> jikanMetadataClient.searchAnime(q, limit = 1).firstOrNull() }
+                jikanInfo?.malId?.takeIf { it > 0 }?.let { resolvedMalId = it }
+                emit(Resource.success(buildFallbackMedia(jikanInfo)))
+            }
+        }
+    }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(1000),
         initialValue = Resource.loading(),
@@ -161,7 +204,7 @@ class MediaPageViewModel @Inject constructor(
             ) { mediaRes, lang, newestFirst ->
                 Triple(mediaRes.data, Media.Language.safeValueOf(lang), newestFirst)
             }.collect { (loadedMedia, lang, newestFirst) ->
-                if (loadedMedia != null) {
+                if (loadedMedia != null && loadedMedia.id > 0) {
                     _franchise.value = franchiseResolver.resolveFranchise(
                         rootMedia = loadedMedia,
                         language = lang,
@@ -233,6 +276,67 @@ class MediaPageViewModel @Inject constructor(
         )
     }
 
+    /** Toggles whether episode names are displayed alongside episode numbers and persists the choice. */
+    fun toggleShowEpisodeNames() = viewModelScope.launch {
+        val next = !showEpisodeNames.value
+        preferencesRepository.setShowEpisodeNames(next)
+        if (next) {
+            loadEpisodeNamesForEpisode(1)
+        }
+    }
+
+    /** Updates and persists the censored vs uncensored version choice for this anime and reloads episodes. */
+    fun setCensorshipVersion(version: CensorshipVersion) = viewModelScope.launch {
+        libraryRepository.savePlaybackPrefs(
+            anilistId = navArgs.id,
+            audioTrack = audioTrack.value.name,
+            subtitlesEnabled = subtitlesEnabled.value,
+            censorshipVersion = version.name,
+        )
+        val versions = _streamingState.value.availableVersions ?: return@launch
+        val targetProvider = versions.providerFor(version)
+        if (targetProvider.providerId != _streamingState.value.providerId) {
+            _streamingState.update { it.copy(isLoading = true, errorMessage = null) }
+            val episodesRes = streamingRepository.fetchEpisodes(targetProvider.providerId)
+            episodesRes.onSuccess { eps ->
+                _streamingState.update {
+                    it.copy(
+                        isLoading = false,
+                        providerId = targetProvider.providerId,
+                        episodes = eps,
+                    )
+                }
+            }.onFailure { err ->
+                _streamingState.update {
+                    it.copy(
+                        isLoading = false,
+                        providerId = targetProvider.providerId,
+                        errorMessage = err.message,
+                    )
+                }
+            }
+        }
+    }
+
+    /** Loads Jikan episode titles for the page containing [episodeNumber] when available. */
+    fun loadEpisodeNamesForEpisode(episodeNumber: Int) {
+        val malId = resolvedMalId ?: return
+        val page = ((episodeNumber - 1).coerceAtLeast(0) / 100) + 1
+        if (!loadedJikanEpisodePages.add(page)) return
+        viewModelScope.launch {
+            val fetched = jikanMetadataClient.fetchEpisodeTitles(malId, page)
+            if (fetched.isNotEmpty()) {
+                _streamingState.update { state ->
+                    val merged = state.episodeTitles.toMutableMap()
+                    fetched.forEach { (ep, title) ->
+                        merged.putIfAbsent(ep, title)
+                    }
+                    state.copy(episodeTitles = merged)
+                }
+            }
+        }
+    }
+
     /** Streams [episode], respecting preferred player (`IN_APP` vs `MPV`) or forcing MPV when [forceMpv] is true. */
     fun watchEpisode(episode: String, forceMpv: Boolean = false) {
         val currentMedia = media.value.data ?: return
@@ -241,6 +345,16 @@ class MediaPageViewModel @Inject constructor(
         val existingDownload = downloadsByEpisode.value[episode]
         val localPath = existingDownload?.videoFilePath
         if (localPath != null && existingDownload.status == "COMPLETED") {
+            viewModelScope.launch {
+                libraryRepository.recordWatchHistory(
+                    anilistId = currentMedia.id,
+                    title = currentMedia.title ?: "Anime",
+                    coverUrl = currentMedia.coverImage,
+                    episodeWatched = episode,
+                    providerId = providerId,
+                    malId = resolvedMalId,
+                )
+            }
             if (forceMpv) {
                 val ok = playerNavigator.openInExternalMpv(
                     title = "${currentMedia.title ?: "Anime"} - Episode $episode",
@@ -303,11 +417,27 @@ class MediaPageViewModel @Inject constructor(
                             title = currentMedia.title ?: "Anime",
                             coverUrl = currentMedia.coverImage,
                             episodeWatched = episode,
+                            providerId = providerId,
+                            malId = resolvedMalId,
+                        )
+                        libraryRepository.savePlaybackPrefs(
+                            anilistId = currentMedia.id,
+                            audioTrack = audioTrack.value.name,
+                            subtitlesEnabled = subtitlesEnabled.value,
+                            lastEpisode = episode,
                         )
                         return@onSuccess
                     }
                     _streamingState.update { it.copy(statusMessage = "MPV not installed; using in-app player") }
                 }
+                libraryRepository.recordWatchHistory(
+                    anilistId = currentMedia.id,
+                    title = currentMedia.title ?: "Anime",
+                    coverUrl = currentMedia.coverImage,
+                    episodeWatched = episode,
+                    providerId = providerId,
+                    malId = resolvedMalId,
+                )
                 playerNavigator.openOnlineStream(
                     anilistId = currentMedia.id,
                     animeTitle = currentMedia.title ?: "Anime",
@@ -377,25 +507,109 @@ class MediaPageViewModel @Inject constructor(
     }
 
     private suspend fun loadStreamingEpisodes(loadedMedia: Media) {
-        _streamingState.update { it.copy(isLoading = true, errorMessage = null) }
-        val titles = listOfNotNull(loadedMedia.englishTitle, loadedMedia.romajiTitle, loadedMedia.title)
-        val providerRes = streamingRepository.resolveAnime(loadedMedia.id, titles)
-        val provider = providerRes.getOrElse { err ->
+        val initialTitles = buildMap {
+            loadedMedia.streamingEpisodes.forEach { ep ->
+                val num = ep.number?.trim()
+                val epTitle = (ep.displayTitle ?: ep.title)?.trim()
+                if (!num.isNullOrEmpty() && !epTitle.isNullOrEmpty()) {
+                    put(num, epTitle)
+                }
+            }
+        }
+        _streamingState.update {
+            it.copy(
+                isLoading = true,
+                errorMessage = null,
+                episodeTitles = initialTitles,
+            )
+        }
+        val titles = listOfNotNull(
+            loadedMedia.englishTitle,
+            loadedMedia.romajiTitle,
+            loadedMedia.title,
+            navArgs.fallbackTitle,
+        )
+        val versionsRes = streamingRepository.resolveAnimeVersions(
+            anilistId = loadedMedia.id,
+            candidateTitles = titles,
+            explicitProviderId = navArgs.providerId,
+        )
+        val versions = versionsRes.getOrElse { err ->
             _streamingState.update {
                 it.copy(isLoading = false, errorMessage = err.message ?: "Unavailable on streaming provider")
             }
             return
         }
-        val episodesRes = streamingRepository.fetchEpisodes(provider.providerId)
+        if (resolvedMalId == null) {
+            resolvedMalId = versions.defaultProvider.malId?.takeIf { it > 0 }
+        }
+        val effectivePrefs = libraryRepository.getEffectivePlaybackPrefs(loadedMedia.id)
+        val preferredVersion = CensorshipVersion.safeValueOf(effectivePrefs.censorshipVersion)
+        val selectedProvider = versions.providerFor(preferredVersion)
+
+        val episodesRes = streamingRepository.fetchEpisodes(selectedProvider.providerId)
         episodesRes.onSuccess { eps ->
             _streamingState.update {
-                it.copy(isLoading = false, providerId = provider.providerId, episodes = eps)
+                it.copy(
+                    isLoading = false,
+                    providerId = selectedProvider.providerId,
+                    availableVersions = versions,
+                    episodes = eps,
+                )
+            }
+            if (showEpisodeNames.value) {
+                loadEpisodeNamesForEpisode(1)
             }
         }.onFailure { err ->
             _streamingState.update {
-                it.copy(isLoading = false, providerId = provider.providerId, errorMessage = err.message)
+                it.copy(
+                    isLoading = false,
+                    providerId = selectedProvider.providerId,
+                    availableVersions = versions,
+                    errorMessage = err.message,
+                )
             }
         }
+    }
+
+    private fun buildFallbackMedia(jikan: JikanAnimeInfo?): Media {
+        val displayTitle = jikan?.titleEnglish ?: jikan?.title ?: navArgs.fallbackTitle ?: "Anime"
+        val format = jikan?.type?.let { Media.Format.safeValueOf(it.uppercase()) }
+        val infoList = buildList {
+            format?.let { add(Media.Info.Format(it)) }
+            jikan?.episodes?.let { add(Media.Info.Item(Media.InfoItem.EPISODES, it.toString())) }
+        }.toImmutableList()
+        return Media(
+            id = navArgs.id,
+            bannerImage = jikan?.coverImageUrl,
+            coverImage = jikan?.coverImageUrl,
+            color = "#00000000",
+            title = displayTitle,
+            englishTitle = jikan?.titleEnglish ?: navArgs.fallbackTitle,
+            romajiTitle = jikan?.title ?: navArgs.fallbackTitle,
+            nativeTitle = jikan?.titleJapanese,
+            mediaFormat = format,
+            totalEpisodes = jikan?.episodes,
+            startYear = jikan?.year,
+            startMonth = null,
+            startDay = null,
+            otherTitles = listOfNotNull(jikan?.title, jikan?.titleEnglish, jikan?.titleJapanese)
+                .distinct()
+                .toImmutableList(),
+            description = jikan?.synopsis.orEmpty(),
+            nextAiring = null,
+            info = infoList,
+            year = jikan?.year?.toString(),
+            season = null,
+            rankings = persistentListOf(),
+            genres = jikan?.genres.orEmpty().toImmutableList(),
+            characters = persistentListOf(),
+            staff = persistentListOf(),
+            trailer = null,
+            streamingEpisodes = persistentListOf(),
+            relations = persistentListOf(),
+            recommendations = persistentListOf(),
+        )
     }
 
     /** Builds a DownloadManager request for saving cover/banner images. */

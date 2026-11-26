@@ -3,6 +3,8 @@ package com.imashnake.animite.anime
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.anigooli.library.LibraryRepository
+import com.anigooli.library.WatchHistoryEntity
 import com.imashnake.animite.api.anilist.AnilistMediaRepository
 import com.imashnake.animite.api.anilist.sanitize.explore.FilterStrategy
 import com.imashnake.animite.api.anilist.sanitize.media.Media
@@ -14,6 +16,7 @@ import com.imashnake.animite.api.preferences.PreferencesRepository
 import com.imashnake.animite.core.model.AnimeList
 import com.imashnake.animite.core.resource.Resource
 import com.imashnake.animite.core.resource.Resource.Companion.asResource
+import com.imashnake.animite.core.ui.component.MediaCardSize
 import com.imashnake.animite.media.ext.nextSeason
 import com.imashnake.animite.media.ext.nextSeasonYear
 import com.imashnake.animite.media.ext.season
@@ -41,9 +44,37 @@ import kotlin.time.Duration.Companion.milliseconds
 @OptIn(ExperimentalCoroutinesApi::class)
 class AnimeViewModel @Inject constructor(
     private val mediaListRepository: AnilistMediaRepository,
+    private val libraryRepository: LibraryRepository,
     savedStateHandle: SavedStateHandle,
-    preferencesRepository: PreferencesRepository
+    private val preferencesRepository: PreferencesRepository,
 ) : ViewModel() {
+
+    /** Effective card size for the Anime tab (per-page override falling back to global preference). */
+    val cardSize = combine(
+        preferencesRepository.animeCardSize,
+        preferencesRepository.mediaCardSize,
+    ) { pageOverride, globalDefault ->
+        MediaCardSize.safeValueOf(pageOverride ?: globalDefault)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(1000), MediaCardSize.COMPACT)
+
+    /** Saved watch history entries ordered most recently watched first. */
+    val watchHistory = libraryRepository.observeWatchHistory()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(1000), emptyList<WatchHistoryEntity>())
+
+    /** Updates and saves the card size preference for the Anime tab. */
+    fun setCardSize(size: MediaCardSize) = viewModelScope.launch {
+        preferencesRepository.setAnimeCardSize(size.name)
+    }
+
+    /** Removes a single entry from watch history. */
+    fun removeFromWatchHistory(anilistId: Int) = viewModelScope.launch {
+        libraryRepository.removeWatchHistoryEntry(anilistId)
+    }
+
+    /** Clears all saved watch history entries. */
+    fun clearWatchHistory() = viewModelScope.launch {
+        libraryRepository.clearWatchHistory()
+    }
 
     private val now = savedStateHandle.getStateFlow(
         key = NOW,

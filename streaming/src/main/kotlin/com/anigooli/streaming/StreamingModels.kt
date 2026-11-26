@@ -22,6 +22,42 @@ enum class AudioTrack {
     }
 }
 
+/** Censorship version choice for anime that have both uncensored and censored releases. */
+enum class CensorshipVersion {
+    /** Uncensored release (default). */
+    UNCENSORED,
+    /** Broadcast / censored release. */
+    CENSORED;
+
+    companion object {
+        /** Safely parses a persisted censorship preference, defaulting to [UNCENSORED]. */
+        fun safeValueOf(raw: String?): CensorshipVersion = when (raw?.uppercase()) {
+            CENSORED.name -> CENSORED
+            else -> UNCENSORED
+        }
+    }
+}
+
+/** Resolved provider entries separating uncensored and censored anime releases when available. */
+data class ResolvedAnimeVersions(
+    /** Uncensored provider entry if detected. */
+    val uncensored: ProviderAnime? = null,
+    /** Censored / standard broadcast provider entry if detected. */
+    val censored: ProviderAnime? = null,
+    /** Default entry prioritizing uncensored whenever available. */
+    val defaultProvider: ProviderAnime,
+) {
+    /** True when both distinct uncensored and censored releases exist on the provider. */
+    val hasMultipleVersions: Boolean
+        get() = uncensored != null && censored != null && uncensored.providerId != censored.providerId
+
+    /** Returns the provider entry matching [version], falling back to [defaultProvider]. */
+    fun providerFor(version: CensorshipVersion): ProviderAnime = when (version) {
+        CensorshipVersion.UNCENSORED -> uncensored ?: defaultProvider
+        CensorshipVersion.CENSORED -> censored ?: defaultProvider
+    }
+}
+
 /** Runtime scraper endpoint and header configuration. */
 @Serializable
 data class ExtractorConfig(
@@ -74,6 +110,8 @@ data class ProviderAnime(
     val englishTitle: String? = null,
     /** Optional Romaji title from provider search results. */
     val romajiTitle: String? = null,
+    /** Optional cover image URL extracted from provider search results. */
+    val coverImage: String? = null,
 )
 
 /** A concrete playable/downloadable video source for a single resolution. */

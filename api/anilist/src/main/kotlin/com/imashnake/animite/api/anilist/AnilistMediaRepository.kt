@@ -9,6 +9,7 @@ import com.imashnake.animite.api.anilist.sanitize.media.Info
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.sanitize.media.MediaList
 import com.imashnake.animite.api.anilist.sanitize.media.Page
+import com.imashnake.animite.api.anilist.type.MediaSort
 import com.imashnake.animite.api.anilist.type.MediaType
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
@@ -64,12 +65,17 @@ class AnilistMediaRepository(
         useNetwork: Boolean,
         filterStrategy: FilterStrategy
     ): Flow<Result<Page<Media.Medium>>> = with(filterStrategy) {
+        val effectiveSort = if (!search.isNullOrBlank()) {
+            listOf(MediaSort.SEARCH_MATCH) + sort.filterNot { it == MediaSort.SEARCH_MATCH }
+        } else {
+            sort
+        }
         apolloClient.query(
             MediaMediumListQuery(
                 type = Optional.presentIfNotNull(mediaType),
                 page = Optional.presentIfNotNull(page),
                 perPage = Optional.presentIfNotNull(perPage),
-                sort = Optional.presentIfNotNull(sort),
+                sort = Optional.presentIfNotNull(effectiveSort),
                 genre = Optional.presentIfNotNull(genre),
                 genreIn = Optional.presentIfNotNull(includedGenres),
                 genreNotIn = Optional.presentIfNotNull(excludedGenres),

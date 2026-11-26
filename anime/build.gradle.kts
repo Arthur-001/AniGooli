@@ -32,8 +32,8 @@ tasks.withType<KotlinCompile>().configureEach {
 }
 
 dependencies {
-    implementation(projects.banner)
     implementation(projects.media)
+    implementation(projects.library)
     implementation(projects.api.anilist)
     implementation(projects.api.preferences)
     implementation(projects.core.model)
@@ -42,10 +42,12 @@ dependencies {
     implementation(projects.navigation)
 
     implementation(libs.kotlinx.collectionsImmutable)
+    implementation(libs.bundles.coil)
 
     // Compose
     implementation(libs.compose.components.resources)
     implementation(libs.compose.foundation)
+    implementation(libs.compose.material.icons.core)
     implementation(libs.compose.material3)
     implementation(libs.compose.runtime)
     implementation(libs.compose.ui)

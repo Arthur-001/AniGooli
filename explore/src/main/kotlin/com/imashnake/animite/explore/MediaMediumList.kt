@@ -46,6 +46,7 @@ import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.core.ui.LocalPaddings
 import com.imashnake.animite.core.ui.component.Divider
 import com.imashnake.animite.core.ui.component.LoadingMediaSmall
+import com.imashnake.animite.core.ui.component.MediaCardSize
 import com.imashnake.animite.core.ui.component.MediaMediumCard
 import com.imashnake.animite.core.ui.component.Paginator
 import com.imashnake.animite.core.ui.rememberDefaultPaddings
@@ -66,6 +67,7 @@ fun MediaMediumList(
     onPageChanged: (Int) -> Unit = {},
     state: LazyListState = rememberLazyListState(),
     contentPadding: PaddingValues = PaddingValues(),
+    cardSize: MediaCardSize = MediaCardSize.COMPACT,
 ) {
     var page by remember { mutableIntStateOf(pageInfo?.currentPage ?: -1) }
     LazyColumn(
@@ -86,9 +88,10 @@ fun MediaMediumList(
                 item = mediaMediumList[index],
                 onClick = onItemClick,
                 rank = rank,
+                cardSize = cardSize,
                 modifier = Modifier
                     .animateItem()
-                    .height(137.dp)
+                    .height(cardSize.listRowHeight)
                     .fillMaxWidth()
                     .clip(
                         RoundedCornerShape(
@@ -128,8 +131,10 @@ private fun MediaMediumItem(
     item: Media.Medium,
     onClick: (Int) -> Unit,
     rank: Int?,
+    cardSize: MediaCardSize,
     modifier: Modifier = Modifier
 ) {
+    val isCompact = cardSize == MediaCardSize.COMPACT
     Box(modifier = modifier.clickable { onClick(item.id) }) {
         if (rank != null) {
             Box(
@@ -159,20 +164,26 @@ private fun MediaMediumItem(
                 tag = null,
                 label = null,
                 onClick = { onClick(item.id) },
-                tagMinLines = 1
+                tagMinLines = 1,
+                imageHeight = cardSize.listRowHeight,
+                cardWidth = cardSize.listCoverWidth,
             )
 
             Column(
-                Modifier.padding(
-                    horizontal = LocalPaddings.current.large / 2,
-                    vertical = LocalPaddings.current.small
-                )
+                verticalArrangement = if (isCompact) Arrangement.Center else Arrangement.Top,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(
+                        horizontal = LocalPaddings.current.large / 2,
+                        vertical = if (isCompact) 4.dp else LocalPaddings.current.small,
+                    ),
             ) {
                 Text(
                     text = item.title.orEmpty(),
                     color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
 
                 item.season?.let {
@@ -181,19 +192,25 @@ private fun MediaMediumItem(
                                 " ${item.seasonYear?.toString().orEmpty()}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1
+                        maxLines = 1,
                     )
                 }
 
-                Spacer(Modifier.size(LocalPaddings.current.medium))
+                Spacer(Modifier.size(if (isCompact) 4.dp else LocalPaddings.current.medium))
 
-                Text(
-                    text = item.studios.joinToString(),
-                    color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (item.studios.isNotEmpty()) {
+                    Text(
+                        text = item.studios.joinToString(),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = if (isCompact) {
+                            MaterialTheme.typography.bodySmall
+                        } else {
+                            MaterialTheme.typography.bodyMedium
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     item.format?.let {
@@ -233,13 +250,14 @@ private fun MediaMediumItem(
 fun LoadingMediaMediumItem(
     shouldShowRank: Boolean,
     modifier: Modifier = Modifier,
+    cardSize: MediaCardSize = MediaCardSize.COMPACT,
 ) {
     Box(modifier) {
         if (shouldShowRank) {
             Box(
                 Modifier
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                    .requiredHeight(137.dp)
+                    .requiredHeight(cardSize.listRowHeight)
                     .width(rankWidth + buffer)
             )
         }
@@ -258,8 +276,8 @@ fun LoadingMediaMediumItem(
                 )
 
             LoadingMediaSmall(
-                imageHeight = 137.dp,
-                cardWidth = 96.dp,
+                imageHeight = cardSize.listRowHeight,
+                cardWidth = cardSize.listCoverWidth,
                 shouldShowLabel = false
             )
         }
@@ -270,7 +288,8 @@ fun LoadingMediaMediumItem(
 fun LoadingMediaMediumList(
     count: Int,
     modifier: Modifier = Modifier,
-    contentPadding: PaddingValues = PaddingValues()
+    contentPadding: PaddingValues = PaddingValues(),
+    cardSize: MediaCardSize = MediaCardSize.COMPACT,
 ) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(LocalPaddings.current.small),
@@ -282,6 +301,7 @@ fun LoadingMediaMediumList(
         items(count) { index ->
             LoadingMediaMediumItem(
                 shouldShowRank = true,
+                cardSize = cardSize,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(

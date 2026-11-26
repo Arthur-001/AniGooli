@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -93,8 +94,10 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.ui.PlayerView
 import com.anigooli.streaming.AudioTrack
@@ -275,20 +278,26 @@ private fun PlayerScreen(
         if (state.isLocalFile) {
             val path = state.localVideoPath ?: return@LaunchedEffect
             val dataFactory = DefaultDataSource.Factory(context)
-            val builder = MediaItem.Builder().setUri(Uri.fromFile(File(path)))
+            val videoSource = ProgressiveMediaSource.Factory(dataFactory)
+                .createMediaSource(MediaItem.fromUri(Uri.fromFile(File(path))))
+            val sources = mutableListOf<MediaSource>(videoSource)
             state.localSubtitlePath?.takeIf { it.isNotBlank() }?.let { subPath ->
-                builder.setSubtitleConfigurations(
-                    listOf(
-                        MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(File(subPath)))
-                            .setMimeType(MimeTypes.TEXT_VTT)
-                            .setLanguage("en")
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                            .build()
-                    )
+                val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(File(subPath)))
+                    .setMimeType(detectSubtitleMimeType(subPath))
+                    .setLanguage("en")
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                    .build()
+                sources.add(
+                    SingleSampleMediaSource.Factory(dataFactory)
+                        .createMediaSource(subConfig, C.TIME_UNSET),
                 )
             }
-            val item = builder.build()
-            exoPlayer.setMediaSource(ProgressiveMediaSource.Factory(dataFactory).createMediaSource(item))
+            val finalSource = if (sources.size > 1) {
+                MergingMediaSource(*sources.toTypedArray())
+            } else {
+                sources.first()
+            }
+            exoPlayer.setMediaSource(finalSource)
             exoPlayer.prepare()
             if (state.targetSeekPositionMs > 0L) exoPlayer.seekTo(state.targetSeekPositionMs)
             exoPlayer.playWhenReady = true
@@ -299,30 +308,37 @@ private fun PlayerScreen(
                 referer = source.referer,
                 origin = source.origin,
             )
-            val builder = MediaItem.Builder().setUri(source.url.toUri())
+            val videoItem = MediaItem.fromUri(source.url.toUri())
+            val videoSource = if (source.isHls) {
+                HlsMediaSource.Factory(dataFactory).createMediaSource(videoItem)
+            } else {
+                ProgressiveMediaSource.Factory(dataFactory).createMediaSource(videoItem)
+            }
+            val sources = mutableListOf<MediaSource>(videoSource)
+            source.audioUrl?.takeIf { it.isNotBlank() }?.let { audioUrl ->
+                val audioItem = MediaItem.fromUri(audioUrl)
+                val audioSource = if (audioUrl.substringBefore('?').endsWith(".m3u8", true) || source.isHls) {
+                    HlsMediaSource.Factory(dataFactory).createMediaSource(audioItem)
+                } else {
+                    ProgressiveMediaSource.Factory(dataFactory).createMediaSource(audioItem)
+                }
+                sources.add(audioSource)
+            }
             source.subtitleUrl?.takeIf { it.isNotBlank() }?.let { subUrl ->
-                builder.setSubtitleConfigurations(
-                    listOf(
-                        MediaItem.SubtitleConfiguration.Builder(subUrl.toUri())
-                            .setMimeType(MimeTypes.TEXT_VTT)
-                            .setLanguage("en")
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                            .build()
-                    )
+                val subConfig = MediaItem.SubtitleConfiguration.Builder(subUrl.toUri())
+                    .setMimeType(detectSubtitleMimeType(subUrl))
+                    .setLanguage("en")
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                    .build()
+                sources.add(
+                    SingleSampleMediaSource.Factory(dataFactory)
+                        .createMediaSource(subConfig, C.TIME_UNSET),
                 )
             }
-            val item = builder.build()
-            val videoSource = if (source.isHls) {
-                HlsMediaSource.Factory(dataFactory).createMediaSource(item)
+            val finalSource = if (sources.size > 1) {
+                MergingMediaSource(*sources.toTypedArray())
             } else {
-                ProgressiveMediaSource.Factory(dataFactory).createMediaSource(item)
-            }
-            val finalSource = if (!source.audioUrl.isNullOrBlank()) {
-                val audioItem = MediaItem.fromUri(source.audioUrl!!)
-                val audioSource = HlsMediaSource.Factory(dataFactory).createMediaSource(audioItem)
-                MergingMediaSource(videoSource, audioSource)
-            } else {
-                videoSource
+                sources.first()
             }
             exoPlayer.setMediaSource(finalSource)
             exoPlayer.prepare()
@@ -332,10 +348,11 @@ private fun PlayerScreen(
     }
 
     // Apply per-anime subtitle toggle immediately without reloading video
-    LaunchedEffect(state.subtitlesEnabled) {
+    LaunchedEffect(state.subtitlesEnabled, state.selectedSource, state.localVideoPath) {
         exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
             .buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !state.subtitlesEnabled)
+            .setPreferredTextLanguage("en")
             .build()
     }
 
@@ -392,6 +409,8 @@ private fun PlayerScreen(
                 PlayerView(ctx).apply {
                     useController = false
                     keepScreenOn = true
+                    subtitleView?.setApplyEmbeddedStyles(true)
+                    subtitleView?.visibility = View.VISIBLE
                     player = exoPlayer
                 }
             },
@@ -1057,5 +1076,15 @@ private fun formatMs(ms: Long): String {
         String.format(Locale.getDefault(), "%d:%02d:%02d", hrs, mins, secs)
     } else {
         String.format(Locale.getDefault(), "%02d:%02d", mins, secs)
+    }
+}
+
+private fun detectSubtitleMimeType(urlOrPath: String): String {
+    val clean = urlOrPath.substringBefore('?').lowercase(Locale.ROOT)
+    return when {
+        clean.endsWith(".srt") -> MimeTypes.APPLICATION_SUBRIP
+        clean.endsWith(".ass") || clean.endsWith(".ssa") -> MimeTypes.TEXT_SSA
+        clean.endsWith(".ttml") || clean.endsWith(".xml") -> MimeTypes.APPLICATION_TTML
+        else -> MimeTypes.TEXT_VTT
     }
 }

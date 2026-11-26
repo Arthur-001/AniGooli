@@ -1,21 +1,24 @@
 package com.imashnake.animite.media
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,28 +27,36 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.anigooli.downloads.DownloadEpisodeEntity
 import com.anigooli.downloads.DownloadStatus
 import com.anigooli.streaming.AudioTrack
+import com.anigooli.streaming.CensorshipVersion
 import com.imashnake.animite.api.anilist.FranchiseEntry
 import com.imashnake.animite.api.anilist.OrganizedFranchise
 import com.imashnake.animite.api.anilist.sanitize.media.Media
@@ -82,16 +93,23 @@ internal fun OfflineListActionRow(
     }
 }
 
-/** Stream & Download controls section for Anime detail pages with per-anime Audio/Subtitle memory. */
-@OptIn(ExperimentalLayoutApi::class)
+/** Stream & Download controls section with compact numbers-only episode grid and action bottom sheet. */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
+@Suppress("LongMethod", "CognitiveComplexMethod")
 internal fun MediaStreamingSection(
     streamingState: StreamingEpisodesUiState,
     audioTrack: AudioTrack,
     subtitlesEnabled: Boolean,
+    showEpisodeNames: Boolean,
+    censorshipVersion: CensorshipVersion,
+    lastWatchedEpisode: String?,
     downloadsByEpisode: Map<String, DownloadEpisodeEntity>,
     onSelectAudio: (AudioTrack) -> Unit,
     onToggleSubtitles: (Boolean) -> Unit,
+    onToggleShowEpisodeNames: () -> Unit,
+    onSelectCensorshipVersion: (CensorshipVersion) -> Unit,
+    onLoadEpisodeNamesForNumber: (Int) -> Unit,
     onWatchEpisode: (String, Boolean) -> Unit,
     onDownloadEpisode: (String) -> Unit,
     onPauseDownload: (String) -> Unit,
@@ -99,6 +117,8 @@ internal fun MediaStreamingSection(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var selectedEpisodeForSheet by remember { mutableStateOf<String?>(null) }
+
     Column(
         verticalArrangement = Arrangement.spacedBy(LocalPaddings.current.small),
         modifier = modifier.fillMaxWidth(),
@@ -109,7 +129,7 @@ internal fun MediaStreamingSection(
             style = MaterialTheme.typography.titleMedium,
         )
 
-        // Per-anime Audio + Subtitle memory chips
+        // Per-anime Audio, Subtitle, Version & Episode Names memory chips
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -128,6 +148,23 @@ internal fun MediaStreamingSection(
                 selected = subtitlesEnabled,
                 onClick = { onToggleSubtitles(!subtitlesEnabled) },
                 label = { Text(if (subtitlesEnabled) "EN Sub ON" else "EN Sub OFF") },
+            )
+            if (streamingState.availableVersions?.hasMultipleVersions == true) {
+                FilterChip(
+                    selected = censorshipVersion == CensorshipVersion.UNCENSORED,
+                    onClick = { onSelectCensorshipVersion(CensorshipVersion.UNCENSORED) },
+                    label = { Text("Uncensored") },
+                )
+                FilterChip(
+                    selected = censorshipVersion == CensorshipVersion.CENSORED,
+                    onClick = { onSelectCensorshipVersion(CensorshipVersion.CENSORED) },
+                    label = { Text("Censored") },
+                )
+            }
+            FilterChip(
+                selected = showEpisodeNames,
+                onClick = onToggleShowEpisodeNames,
+                label = { Text(if (showEpisodeNames) "Names ON" else "Numbers Only") },
             )
         }
 
@@ -165,115 +202,140 @@ internal fun MediaStreamingSection(
                 )
             }
         } else if (streamingState.episodes.isNotEmpty()) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(streamingState.episodes, key = { it }) { ep ->
-                    val dl = downloadsByEpisode[ep]
-                    val dlStatus = dl?.let { runCatching { DownloadStatus.valueOf(it.status) }.getOrNull() }
-                    val isBusy = streamingState.busyEpisode == ep
+            val episodes = streamingState.episodes
+            val chunkSize = if (episodes.size > 500) 100 else 50
+            val chunks = remember(episodes, chunkSize) { episodes.chunked(chunkSize) }
+            val defaultChunkIdx = remember(chunks, lastWatchedEpisode) {
+                val idx = lastWatchedEpisode?.let { last -> chunks.indexOfFirst { last in it } } ?: 0
+                if (idx >= 0) idx else 0
+            }
+            var selectedChunkIndex by remember(episodes) { mutableIntStateOf(defaultChunkIdx) }
+            val safeChunkIndex = selectedChunkIndex.coerceIn(0, (chunks.size - 1).coerceAtLeast(0))
+            val visibleEpisodes = chunks.getOrElse(safeChunkIndex) { episodes }
 
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        ),
-                    ) {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.padding(10.dp),
+            LaunchedEffect(showEpisodeNames, safeChunkIndex, episodes) {
+                if (showEpisodeNames) {
+                    val firstNum = visibleEpisodes.firstOrNull()?.toDoubleOrNull()?.toInt() ?: 1
+                    onLoadEpisodeNamesForNumber(firstNum)
+                }
+            }
+
+            if (chunks.size > 1) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    itemsIndexed(chunks) { idx, chunk ->
+                        FilterChip(
+                            selected = idx == safeChunkIndex,
+                            onClick = { selectedChunkIndex = idx },
+                            label = { Text("${chunk.first()}–${chunk.last()}") },
+                        )
+                    }
+                }
+            }
+
+            if (showEpisodeNames) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    visibleEpisodes.forEach { ep ->
+                        val dl = downloadsByEpisode[ep]
+                        val dlStatus = dl?.let { runCatching { DownloadStatus.valueOf(it.status) }.getOrNull() }
+                        val isBusy = streamingState.busyEpisode == ep
+                        val isLastWatched = ep == lastWatchedEpisode
+                        val epName = streamingState.episodeTitles[ep]
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isLastWatched) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainer
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { selectedEpisodeForSheet = ep },
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             ) {
                                 Text(
-                                    text = "Ep $ep",
-                                    style = MaterialTheme.typography.titleSmall,
+                                    text = ep,
+                                    style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
+                                    color = if (isLastWatched) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
                                 )
-                                if (isBusy) {
-                                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                                }
+                                Text(
+                                    text = epName ?: "Episode $ep",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                EpisodeStatusIndicator(isBusy = isBusy, dlStatus = dlStatus, dl = dl)
                             }
+                        }
+                    }
+                }
+            } else {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    visibleEpisodes.forEach { ep ->
+                        val dl = downloadsByEpisode[ep]
+                        val dlStatus = dl?.let { runCatching { DownloadStatus.valueOf(it.status) }.getOrNull() }
+                        val isBusy = streamingState.busyEpisode == ep
+                        val isLastWatched = ep == lastWatchedEpisode
+                        val containerColor = when {
+                            isLastWatched -> MaterialTheme.colorScheme.primaryContainer
+                            dlStatus == DownloadStatus.COMPLETED -> MaterialTheme.colorScheme.secondaryContainer
+                            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                        }
 
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = containerColor,
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { selectedEpisodeForSheet = ep },
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                             ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier
-                                        .clip(CircleShape)
-                                        .clickable(enabled = !isBusy) { onWatchEpisode(ep, false) },
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                    ) {
-                                        Icon(
-                                            Icons.Rounded.PlayArrow,
-                                            contentDescription = "Play",
-                                            modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    Text(
+                                        text = ep,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isLastWatched) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface
+                                        },
+                                    )
+                                    if (isBusy) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(12.dp),
+                                            strokeWidth = 2.dp,
                                         )
-                                        Spacer(Modifier.width(2.dp))
-                                        Text(
-                                            text = "Play",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    } else if (dlStatus == DownloadStatus.COMPLETED) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primary),
                                         )
-                                    }
-                                }
-
-                                OutlinedButton(
-                                    enabled = !isBusy,
-                                    onClick = { onWatchEpisode(ep, true) },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(28.dp),
-                                ) {
-                                    Text("MPV", style = MaterialTheme.typography.labelSmall)
-                                }
-
-                                when (dlStatus) {
-                                    DownloadStatus.COMPLETED -> {
-                                        Icon(
-                                            painter = painterResource(R.drawable.download_done),
-                                            contentDescription = "Downloaded",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp),
-                                        )
-                                    }
-                                    DownloadStatus.DOWNLOADING, DownloadStatus.QUEUED -> {
-                                        TextButton(
-                                            onClick = { dl?.id?.let(onPauseDownload) },
-                                            contentPadding = PaddingValues(horizontal = 6.dp),
-                                            modifier = Modifier.height(28.dp),
-                                        ) {
-                                            Text("${dl?.progressPercent ?: 0}%", style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    }
-                                    DownloadStatus.PAUSED, DownloadStatus.FAILED -> {
-                                        IconButton(
-                                            onClick = { dl?.id?.let(onResumeDownload) },
-                                            modifier = Modifier.size(28.dp),
-                                        ) {
-                                            Icon(Icons.Rounded.Refresh, contentDescription = "Resume", modifier = Modifier.size(16.dp))
-                                        }
-                                    }
-                                    null -> {
-                                        IconButton(
-                                            enabled = !isBusy,
-                                            onClick = { onDownloadEpisode(ep) },
-                                            modifier = Modifier.size(28.dp),
-                                        ) {
-                                            Icon(
-                                                painter = painterResource(R.drawable.download),
-                                                contentDescription = "Download Episode $ep",
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -282,6 +344,139 @@ internal fun MediaStreamingSection(
                 }
             }
         }
+    }
+
+    selectedEpisodeForSheet?.let { ep ->
+        val dl = downloadsByEpisode[ep]
+        val dlStatus = dl?.let { runCatching { DownloadStatus.valueOf(it.status) }.getOrNull() }
+        val isBusy = streamingState.busyEpisode == ep
+        val epTitle = streamingState.episodeTitles[ep]
+
+        ModalBottomSheet(onDismissRequest = { selectedEpisodeForSheet = null }) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Episode $ep",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    if (!epTitle.isNullOrBlank()) {
+                        Text(
+                            text = epTitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Button(
+                        enabled = !isBusy,
+                        onClick = {
+                            selectedEpisodeForSheet = null
+                            onWatchEpisode(ep, false)
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            contentDescription = "Play",
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Play")
+                    }
+
+                    OutlinedButton(
+                        enabled = !isBusy,
+                        onClick = {
+                            selectedEpisodeForSheet = null
+                            onWatchEpisode(ep, true)
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("MPV")
+                    }
+
+                    when (dlStatus) {
+                        DownloadStatus.COMPLETED -> {
+                            OutlinedButton(
+                                enabled = false,
+                                onClick = {},
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.download_done),
+                                    contentDescription = "Downloaded",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                        DownloadStatus.DOWNLOADING, DownloadStatus.QUEUED -> {
+                            OutlinedButton(
+                                onClick = { dl?.id?.let(onPauseDownload) },
+                            ) {
+                                Text("${dl?.progressPercent ?: 0}%")
+                            }
+                        }
+                        DownloadStatus.PAUSED, DownloadStatus.FAILED -> {
+                            OutlinedButton(
+                                onClick = { dl?.id?.let(onResumeDownload) },
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Refresh,
+                                    contentDescription = "Resume Download",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                        null -> {
+                            OutlinedButton(
+                                enabled = !isBusy,
+                                onClick = { onDownloadEpisode(ep) },
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.download),
+                                    contentDescription = "Download Episode $ep",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeStatusIndicator(
+    isBusy: Boolean,
+    dlStatus: DownloadStatus?,
+    dl: DownloadEpisodeEntity?,
+) {
+    when {
+        isBusy -> CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        dlStatus == DownloadStatus.COMPLETED -> Icon(
+            painter = painterResource(R.drawable.download_done),
+            contentDescription = "Downloaded",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        dlStatus == DownloadStatus.DOWNLOADING || dlStatus == DownloadStatus.QUEUED -> Text(
+            text = "${dl?.progressPercent ?: 0}%",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

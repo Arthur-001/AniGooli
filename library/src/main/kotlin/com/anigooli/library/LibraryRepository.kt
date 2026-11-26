@@ -2,6 +2,7 @@ package com.anigooli.library
 
 import androidx.room.withTransaction
 import com.imashnake.animite.api.preferences.AUDIO_TRACK_JAPANESE
+import com.imashnake.animite.api.preferences.CENSORSHIP_UNCENSORED
 import com.imashnake.animite.api.preferences.PreferencesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -315,13 +316,19 @@ class LibraryRepository @Inject constructor(
     }
 
     /**
-     * Resolves effective per-anime audio track, subtitles enabled state, and resume position,
-     * falling back to Global Settings (`JAPANESE` + `English Subtitles ON`) for new anime.
+     * Resolves effective per-anime audio track, subtitles enabled state, censorship version, and resume position,
+     * falling back to Global Settings (`JAPANESE`, `English Subtitles ON`, `UNCENSORED`) for new anime.
      */
     suspend fun getEffectivePlaybackPrefs(anilistId: Int): AnimePlaybackPrefsEntity =
         withContext(Dispatchers.IO) {
             val saved = dao.getPlaybackPrefs(anilistId)
-            if (saved != null) return@withContext saved
+            val defaultCensorship = preferencesRepository.defaultCensorshipVersion.firstOrNull()
+                ?: CENSORSHIP_UNCENSORED
+            if (saved != null) {
+                return@withContext saved.copy(
+                    censorshipVersion = saved.censorshipVersion ?: defaultCensorship,
+                )
+            }
             val defaultAudio = preferencesRepository.defaultAudioTrack.firstOrNull() ?: AUDIO_TRACK_JAPANESE
             val defaultSubs = preferencesRepository.defaultSubtitlesEnabled.firstOrNull() ?: true
             AnimePlaybackPrefsEntity(
@@ -331,6 +338,7 @@ class LibraryRepository @Inject constructor(
                 preferredQualityOverride = null,
                 lastEpisode = null,
                 lastPositionMs = 0L,
+                censorshipVersion = defaultCensorship,
                 updatedAt = System.currentTimeMillis(),
             )
         }
@@ -339,7 +347,7 @@ class LibraryRepository @Inject constructor(
     fun observePlaybackPrefs(anilistId: Int): Flow<AnimePlaybackPrefsEntity?> =
         dao.observePlaybackPrefs(anilistId)
 
-    /** Saves per-anime audio track, subtitles flag, and optional quality/episode/position memory. */
+    /** Saves per-anime audio track, subtitles flag, and optional quality/episode/position/censorship memory. */
     suspend fun savePlaybackPrefs(
         anilistId: Int,
         audioTrack: String,
@@ -347,6 +355,7 @@ class LibraryRepository @Inject constructor(
         preferredQualityOverride: String? = null,
         lastEpisode: String? = null,
         lastPositionMs: Long? = null,
+        censorshipVersion: String? = null,
     ) = withContext(Dispatchers.IO) {
         val current = dao.getPlaybackPrefs(anilistId)
         dao.upsertPlaybackPrefs(
@@ -357,27 +366,46 @@ class LibraryRepository @Inject constructor(
                 preferredQualityOverride = preferredQualityOverride ?: current?.preferredQualityOverride,
                 lastEpisode = lastEpisode ?: current?.lastEpisode,
                 lastPositionMs = lastPositionMs ?: current?.lastPositionMs ?: 0L,
+                censorshipVersion = censorshipVersion ?: current?.censorshipVersion,
                 updatedAt = System.currentTimeMillis(),
             )
         )
     }
 
-    /** Records an anime as streamed in watch history so release notifications monitor it too. */
+    /** Records an anime as streamed in watch history so release notifications and History UI display it. */
     suspend fun recordWatchHistory(
         anilistId: Int,
         title: String,
         coverUrl: String?,
         episodeWatched: String,
+        providerId: String? = null,
+        malId: Int? = null,
     ) = withContext(Dispatchers.IO) {
+        val existing = dao.getWatchHistoryById(anilistId)
         dao.upsertWatchHistory(
             WatchHistoryEntity(
                 anilistId = anilistId,
                 title = title,
-                coverUrl = coverUrl,
+                coverUrl = coverUrl ?: existing?.coverUrl,
                 lastEpisodeWatched = episodeWatched,
                 lastWatchedAt = System.currentTimeMillis(),
+                providerId = providerId ?: existing?.providerId,
+                malId = malId ?: existing?.malId,
             )
         )
+    }
+
+    /** Streams all watch history entries ordered most recently watched first. */
+    fun observeWatchHistory(): Flow<List<WatchHistoryEntity>> = dao.observeWatchHistory()
+
+    /** Deletes a single entry from watch history. */
+    suspend fun removeWatchHistoryEntry(anilistId: Int) = withContext(Dispatchers.IO) {
+        dao.deleteWatchHistory(anilistId)
+    }
+
+    /** Clears all entries from watch history. */
+    suspend fun clearWatchHistory() = withContext(Dispatchers.IO) {
+        dao.clearWatchHistory()
     }
 
     private suspend fun resolveOrCreateGenreIds(

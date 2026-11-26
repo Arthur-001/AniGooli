@@ -148,6 +148,11 @@
             if (!title) continue;
             var anilistId = anilistStr ? parseInt(anilistStr, 10) : null;
             var malId = malStr ? parseInt(malStr, 10) : null;
+            var cover = matchStringProp(item, "extraLarge") ||
+                matchStringProp(item, "large") ||
+                matchStringProp(item, "poster") ||
+                matchStringProp(item, "image") ||
+                matchStringProp(item, "cover");
             seen[providerId] = true;
             results.push({
                 providerId: providerId,
@@ -155,7 +160,8 @@
                 malId: isNaN(malId) ? null : malId,
                 title: title,
                 englishTitle: engTitle || null,
-                romajiTitle: romTitle || null
+                romajiTitle: romTitle || null,
+                coverImage: (cover && /^https?:\/\//i.test(cover)) ? cover : null
             });
         }
         return results;

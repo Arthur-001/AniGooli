@@ -13,6 +13,7 @@ import com.imashnake.animite.api.preferences.PreferencesRepository
 import com.imashnake.animite.core.model.MangaList
 import com.imashnake.animite.core.resource.Resource
 import com.imashnake.animite.core.resource.Resource.Companion.asResource
+import com.imashnake.animite.core.ui.component.MediaCardSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -35,8 +36,20 @@ import kotlin.time.Duration.Companion.milliseconds
 @OptIn(ExperimentalCoroutinesApi::class)
 class MangaViewModel @Inject constructor(
     private val mediaListRepository: AnilistMediaRepository,
-    preferencesRepository: PreferencesRepository
+    private val preferencesRepository: PreferencesRepository
 ) : ViewModel() {
+    /** Effective card size for the Manga tab (per-page override falling back to global preference). */
+    val cardSize = combine(
+        preferencesRepository.mangaCardSize,
+        preferencesRepository.mediaCardSize,
+    ) { pageOverride, globalDefault ->
+        MediaCardSize.safeValueOf(pageOverride ?: globalDefault)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(1000), MediaCardSize.COMPACT)
+
+    /** Updates and saves the card size preference for the Manga tab. */
+    fun setCardSize(size: MediaCardSize) = viewModelScope.launch {
+        preferencesRepository.setMangaCardSize(size.name)
+    }
     private val refreshTrigger = MutableSharedFlow<Unit>()
 
     var useNetwork = false

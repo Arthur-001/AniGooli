@@ -194,12 +194,14 @@ fun MediaCard(
     modifier: Modifier = Modifier,
     imageModifier: Modifier = Modifier,
     textModifier: Modifier = Modifier,
+    imageHeight: Dp = 200.dp,
+    cardWidth: Dp = 140.dp,
 ) {
     MediaSmall(
         image = image,
         onClick = onClick,
-        imageHeight = 200.dp,
-        cardWidth = 140.dp,
+        imageHeight = imageHeight,
+        cardWidth = cardWidth,
         modifier = modifier,
         imageModifier = imageModifier,
         textModifier = textModifier,
@@ -225,12 +227,14 @@ fun MediaMediumCard(
     modifier: Modifier = Modifier,
     imageModifier: Modifier = Modifier,
     textModifier: Modifier = Modifier,
+    imageHeight: Dp = 137.dp,
+    cardWidth: Dp = 96.dp,
 ) {
     MediaSmall(
         image = image,
         onClick = onClick,
-        imageHeight = 137.dp,
-        cardWidth = 96.dp,
+        imageHeight = imageHeight,
+        cardWidth = cardWidth,
         modifier = modifier,
         imageModifier = imageModifier,
         textModifier = textModifier,
@@ -380,35 +384,44 @@ internal fun MediaSmall(
                 }
         }
 
-        if (label != null)
+        if (label != null) {
+            val isCompact = cardWidth < 120.dp
+            val labelHorizontalPadding = if (isCompact) 8.dp else 16.dp
+            val labelVerticalPadding = if (isCompact) 6.dp else 10.dp
+            val labelStyle = if (isCompact) {
+                MaterialTheme.typography.labelMedium
+            } else {
+                MaterialTheme.typography.labelLarge
+            }
             Box {
                 Text(
                     text = " \n ",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelLarge,
+                    style = labelStyle,
                     maxLines = 2,
-                    modifier = Modifier.padding(vertical = 10.dp)
+                    modifier = Modifier.padding(vertical = labelVerticalPadding)
                 )
 
                 Box(
                     Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .padding(horizontal = labelHorizontalPadding, vertical = labelVerticalPadding)
                 ) {
                     Text(
                         text = label,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelLarge,
+                        style = labelStyle,
                         maxLines = 2,
                         // TODO: Add a custom overflow indicator:
                         //  https://proandroiddev.com/detect-text-overflow-in-jetpack-compose-56c0b83da5a5.
-                        overflow = TextOverflow.Visible,
+                        overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,
                         modifier = textModifier.align(Alignment.Center),
                     )
                 }
             }
+        }
     }
 }
 

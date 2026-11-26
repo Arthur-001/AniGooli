@@ -32,34 +32,119 @@ class StreamingRepository @Inject constructor(
     /** Returns current status metadata for the active streaming script. */
     suspend fun getExtractorStatus(): ExtractorStatus = scriptManager.getStatus()
 
-    /** Finds the matching streaming provider entry for an AniList anime using AniList ID and title fallback. */
-    suspend fun resolveAnime(anilistId: Int, candidateTitles: List<String>): Result<ProviderAnime> =
+    /** Searches the streaming provider directly by [query] (including adult/ecchi entries). */
+    suspend fun searchProvider(query: String): Result<List<ProviderAnime>> =
         withContext(Dispatchers.IO) {
             runCatching {
+                val trimmed = query.trim()
+                if (trimmed.isEmpty()) return@runCatching emptyList()
                 scriptManager.refreshIfNeeded(force = false)
-                val queries = candidateTitles
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .distinct()
-                if (queries.isEmpty()) throw IOException("No searchable title available")
-
-                var bestFallback: ProviderAnime? = null
-                for (q in queries) {
-                    val req = runtime.buildSearchRequest(q)
-                    val resp = httpClient.get(req.url, req.headers)
-                    val results = runtime.parseSearchResponse(resp.body)
-                    results.firstOrNull { it.anilistId == anilistId }?.let { return@runCatching it }
-                    if (bestFallback == null) {
-                        bestFallback = results.firstOrNull {
-                            it.englishTitle.equals(q, true) ||
-                                it.romajiTitle.equals(q, true) ||
-                                it.title.equals(q, true)
-                        } ?: results.firstOrNull()
-                    }
-                }
-                bestFallback ?: throw IOException("Anime not found on streaming provider")
+                val req = runtime.buildSearchRequest(trimmed)
+                val resp = httpClient.get(req.url, req.headers)
+                runtime.parseSearchResponse(resp.body)
             }
         }
+
+    /**
+     * Resolves both uncensored and censored provider entries for an anime when available,
+     * prioritizing the uncensored release as [ResolvedAnimeVersions.defaultProvider].
+     */
+    suspend fun resolveAnimeVersions(
+        anilistId: Int,
+        candidateTitles: List<String>,
+        explicitProviderId: String? = null,
+    ): Result<ResolvedAnimeVersions> = withContext(Dispatchers.IO) {
+        runCatching {
+            scriptManager.refreshIfNeeded(force = false)
+            val cleanedTitles = candidateTitles
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+            val primaryTitle = cleanedTitles.firstOrNull()
+            val queries = buildList {
+                addAll(cleanedTitles)
+                if (primaryTitle != null && !primaryTitle.contains("uncensored", ignoreCase = true)) {
+                    add("$primaryTitle uncensored")
+                }
+            }.distinct()
+
+            if (queries.isEmpty() && explicitProviderId.isNullOrBlank()) {
+                throw IOException("No searchable title available")
+            }
+
+            val aggregated = LinkedHashMap<String, ProviderAnime>()
+            for (q in queries) {
+                val results = runCatching {
+                    val req = runtime.buildSearchRequest(q)
+                    val resp = httpClient.get(req.url, req.headers)
+                    runtime.parseSearchResponse(resp.body)
+                }.getOrDefault(emptyList())
+                results.forEach { item ->
+                    aggregated.putIfAbsent(item.providerId, item)
+                }
+            }
+
+            val allResults = aggregated.values.toList()
+            val anilistMatches = if (anilistId > 0) {
+                allResults.filter { it.anilistId == anilistId }
+            } else {
+                emptyList()
+            }
+            val titleMatches = allResults.filter { item ->
+                cleanedTitles.any { title ->
+                    item.englishTitle.equals(title, ignoreCase = true) ||
+                        item.romajiTitle.equals(title, ignoreCase = true) ||
+                        item.title.equals(title, ignoreCase = true) ||
+                        isUncensoredVariantOf(item, title)
+                }
+            }
+            val candidatePool = (anilistMatches + titleMatches + allResults.take(3)).distinctBy { it.providerId }
+
+            val uncensored = candidatePool.firstOrNull { isExplicitlyUncensored(it) }
+            val censored = candidatePool.firstOrNull { !isExplicitlyUncensored(it) }
+                ?: explicitProviderId?.let { id ->
+                    allResults.firstOrNull { it.providerId == id }
+                        ?: ProviderAnime(providerId = id, anilistId = anilistId.takeIf { it > 0 }, title = primaryTitle ?: id)
+                }
+            val explicitMatch = explicitProviderId?.let { id ->
+                allResults.firstOrNull { it.providerId == id }
+                    ?: ProviderAnime(providerId = id, anilistId = anilistId.takeIf { it > 0 }, title = primaryTitle ?: id)
+            }
+
+            val defaultProvider = uncensored
+                ?: explicitMatch
+                ?: censored
+                ?: candidatePool.firstOrNull()
+                ?: throw IOException("Anime not found on streaming provider")
+
+            ResolvedAnimeVersions(
+                uncensored = uncensored,
+                censored = censored,
+                defaultProvider = defaultProvider,
+            )
+        }
+    }
+
+    /** Finds the matching streaming provider entry for an AniList anime using AniList ID and title fallback. */
+    suspend fun resolveAnime(anilistId: Int, candidateTitles: List<String>): Result<ProviderAnime> =
+        resolveAnimeVersions(anilistId, candidateTitles).map { it.defaultProvider }
+
+    private fun isExplicitlyUncensored(item: ProviderAnime): Boolean {
+        val combined = listOfNotNull(item.title, item.englishTitle, item.romajiTitle, item.providerId)
+            .joinToString(" ")
+            .lowercase()
+        return combined.contains("uncensored") ||
+            combined.contains("un-censored") ||
+            combined.contains("at-x")
+    }
+
+    private fun isUncensoredVariantOf(item: ProviderAnime, baseTitle: String): Boolean {
+        if (!isExplicitlyUncensored(item)) return false
+        val normalizedBase = baseTitle.lowercase().trim()
+        return listOfNotNull(item.title, item.englishTitle, item.romajiTitle).any { t ->
+            t.lowercase().contains(normalizedBase)
+        }
+    }
 
     /** Fetches available episode number strings (e.g. ["1", "2", ...]) for [providerId]. */
     suspend fun fetchEpisodes(providerId: String): Result<List<String>> =

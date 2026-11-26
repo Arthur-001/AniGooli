@@ -34,7 +34,7 @@ class AnilistSearchRepository(
                     type = Optional.presentIfNotNull(type),
                     perPage = Optional.presentIfNotNull(perPage),
                     search = Optional.presentIfNotNull(search),
-                    sort = Optional.present(listOf(MediaSort.POPULARITY_DESC)),
+                    sort = Optional.present(listOf(MediaSort.SEARCH_MATCH, MediaSort.POPULARITY_DESC)),
                     isAdult = Optional.presentIfNotNull(if (isNsfwEnabled) null else false)
                 )
             )

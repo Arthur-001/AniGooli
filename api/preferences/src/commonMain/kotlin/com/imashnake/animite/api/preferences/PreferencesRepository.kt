@@ -35,6 +35,16 @@ const val AUDIO_TRACK_ENGLISH_DUB = "ENGLISH_DUB"
 const val PLAYER_IN_APP = "IN_APP"
 const val PLAYER_MPV = "MPV"
 const val DEFAULT_PRE_BUFFER_MB = 1024
+/** Compact card size preset. */
+const val CARD_SIZE_COMPACT = "COMPACT"
+/** Medium card size preset. */
+const val CARD_SIZE_MEDIUM = "MEDIUM"
+/** Large card size preset. */
+const val CARD_SIZE_LARGE = "LARGE"
+/** Default uncensored anime version preference. */
+const val CENSORSHIP_UNCENSORED = "UNCENSORED"
+/** Censored anime version preference. */
+const val CENSORSHIP_CENSORED = "CENSORED"
 
 /**
  * Stores API-specific state in an on-disk cache, and exposes the values as a Flow.
@@ -318,6 +328,57 @@ class PreferencesRepository internal constructor(
     val extractorLastCheckedMs = dataStore.getValue(extractorLastCheckedMsKey, 0L)
     suspend fun setExtractorLastCheckedMs(timestampMs: Long) {
         dataStore.setValue(extractorLastCheckedMsKey, timestampMs)
+    }
+
+    private val mediaCardSizeKey = stringPreferencesKey("media_card_size")
+    /** Global card size preference across Anime, Manga, and Explore pages. */
+    val mediaCardSize = dataStore.getValue(mediaCardSizeKey, CARD_SIZE_COMPACT)
+    /** Updates global card size and resets per-page overrides so all pages reflect the setting. */
+    suspend fun setMediaCardSize(size: String) {
+        dataStore.setValue(mediaCardSizeKey, size)
+        dataStore.setValue(animeCardSizeKey, null)
+        dataStore.setValue(mangaCardSizeKey, null)
+        dataStore.setValue(exploreCardSizeKey, null)
+    }
+
+    private val animeCardSizeKey = stringPreferencesKey("anime_card_size")
+    /** Optional per-page card size override for the Anime tab. */
+    val animeCardSize = dataStore.getValue(animeCardSizeKey, null)
+    /** Persists per-page card size for the Anime tab. */
+    suspend fun setAnimeCardSize(size: String?) {
+        dataStore.setValue(animeCardSizeKey, size)
+    }
+
+    private val mangaCardSizeKey = stringPreferencesKey("manga_card_size")
+    /** Optional per-page card size override for the Manga tab. */
+    val mangaCardSize = dataStore.getValue(mangaCardSizeKey, null)
+    /** Persists per-page card size for the Manga tab. */
+    suspend fun setMangaCardSize(size: String?) {
+        dataStore.setValue(mangaCardSizeKey, size)
+    }
+
+    private val exploreCardSizeKey = stringPreferencesKey("explore_card_size")
+    /** Optional per-page card size override for the Explore tab. */
+    val exploreCardSize = dataStore.getValue(exploreCardSizeKey, null)
+    /** Persists per-page card size for the Explore tab. */
+    suspend fun setExploreCardSize(size: String?) {
+        dataStore.setValue(exploreCardSizeKey, size)
+    }
+
+    private val showEpisodeNamesKey = booleanPreferencesKey("show_episode_names")
+    /** Whether episode lists display episode names in addition to numbers. */
+    val showEpisodeNames = dataStore.getValue(showEpisodeNamesKey, false)
+    /** Persists whether episode names should be shown in the episode selector. */
+    suspend fun setShowEpisodeNames(show: Boolean) {
+        dataStore.setValue(showEpisodeNamesKey, show)
+    }
+
+    private val defaultCensorshipVersionKey = stringPreferencesKey("default_censorship_version")
+    /** Global default anime version preference (Uncensored vs Censored). */
+    val defaultCensorshipVersion = dataStore.getValue(defaultCensorshipVersionKey, CENSORSHIP_UNCENSORED)
+    /** Persists global default anime version preference. */
+    suspend fun setDefaultCensorshipVersion(version: String) {
+        dataStore.setValue(defaultCensorshipVersionKey, version)
     }
     // endregion
 

@@ -11,15 +11,21 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
@@ -28,12 +34,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.dimensionResource
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEachIndexed
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -41,13 +48,13 @@ import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.sanitize.media.Media.Sort.Companion.sanitize
 import com.imashnake.animite.api.anilist.sanitize.media.MediaList
 import com.imashnake.animite.api.anilist.type.MediaType
-import com.imashnake.animite.banner.BannerLayout
-import com.imashnake.animite.banner.MountFuji
 import com.imashnake.animite.core.resource.Resource
 import com.imashnake.animite.core.ui.LocalPaddings
+import com.imashnake.animite.core.ui.component.CardSizeStepper
 import com.imashnake.animite.core.ui.component.EmptyChip
 import com.imashnake.animite.core.ui.component.LoadingMediaSmallRow
 import com.imashnake.animite.core.ui.component.MediaCard
+import com.imashnake.animite.core.ui.component.MediaCardSize
 import com.imashnake.animite.core.ui.component.MediaSmallRow
 import com.imashnake.animite.core.ui.ext.horizontalOnly
 import com.imashnake.animite.core.ui.layout.TranslucentStatusBarLayout
@@ -84,6 +91,7 @@ fun MangaScreen(
     val insetAndNavigationPaddingValues = insetPaddingValues + navigationComponentPaddingValues
 
     val lists by viewModel.lists.collectAsState()
+    val cardSize by viewModel.cardSize.collectAsState()
 
     var isRefreshing by remember { mutableStateOf(false) }
     val pullToRefreshState = rememberPullToRefreshState()
@@ -95,75 +103,90 @@ fun MangaScreen(
     ) {
         TranslucentStatusBarLayout(scrollState) {
             Box(Modifier.verticalScroll(scrollState)) {
-                BannerLayout(
-                    banner = { bannerModifier ->
-                        MountFuji(
-                            header = stringResource(R.string.okaeri),
-                            insetPaddingValues = insetPaddingValues,
-                            navigationComponentPaddingValues = navigationComponentPaddingValues,
-                            modifier = bannerModifier,
+                Column(
+                    modifier = Modifier.padding(
+                        top = insetPaddingValues.calculateTopPadding() + LocalPaddings.current.small,
+                        bottom = LocalPaddings.current.large / 2 +
+                            insetAndNavigationPaddingValues.calculateBottomPadding(),
+                    ),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                PaddingValues(
+                                    horizontal = LocalPaddings.current.large,
+                                    vertical = LocalPaddings.current.small,
+                                ) + insetAndNavigationPaddingValues.horizontalOnly,
+                            ),
+                    ) {
+                        Text(
+                            text = "Manga",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
-                    },
-                    content = {
-                        lists.fastForEachIndexed { index, resource ->
-                            AnimatedContent(
-                                targetState = resource,
-                                transitionSpec = {
-                                    fadeIn(tween(500, delayMillis = index * 100))
-                                        .togetherWith(fadeOut(tween(500)))
-                                },
-                            ) {
-                                when (it) {
-                                    is Resource.Success -> {
-                                        val mangaRow = resource.data
-                                        if (mangaRow?.mediaList?.list?.isNotEmpty() == true) {
-                                            MangaRow(
-                                                index = index,
-                                                title = stringResource(mangaRow.title),
-                                                mediaList = mangaRow.mediaList,
-                                                onItemClicked = { media ->
-                                                    onNavigateToMediaItem(
-                                                        MediaPage(
-                                                            id = media.id,
-                                                            source = index.toString(),
-                                                            mediaType = MediaType.MANGA.rawValue,
-                                                        )
+                        CardSizeStepper(
+                            currentSize = cardSize,
+                            onSizeChange = viewModel::setCardSize,
+                        )
+                    }
+
+                    lists.fastForEachIndexed { index, resource ->
+                        AnimatedContent(
+                            targetState = resource,
+                            transitionSpec = {
+                                fadeIn(tween(500, delayMillis = index * 100))
+                                    .togetherWith(fadeOut(tween(500)))
+                            },
+                        ) {
+                            when (it) {
+                                is Resource.Success -> {
+                                    val mangaRow = resource.data
+                                    if (mangaRow?.mediaList?.list?.isNotEmpty() == true) {
+                                        MangaRow(
+                                            index = index,
+                                            title = stringResource(mangaRow.title),
+                                            mediaList = mangaRow.mediaList,
+                                            cardSize = cardSize,
+                                            onItemClicked = { media ->
+                                                onNavigateToMediaItem(
+                                                    MediaPage(
+                                                        id = media.id,
+                                                        source = index.toString(),
+                                                        mediaType = MediaType.MANGA.rawValue,
                                                     )
-                                                },
-                                                onNavigateToExplore = onNavigateToExplore,
-                                                sharedTransitionScope = sharedTransitionScope,
-                                                animatedVisibilityScope = animatedVisibilityScope,
-                                                contentPadding = PaddingValues(
-                                                    horizontal = LocalPaddings.current.large,
-                                                    vertical = LocalPaddings.current.large / 2,
-                                                ) + insetAndNavigationPaddingValues.horizontalOnly
-                                            )
-                                        }
-                                    }
-                                    is Resource.Loading -> {
-                                        LoadingMediaSmallRow(
-                                            count = 10,
-                                            imageHeight = 200.dp,
-                                            cardWidth = 140.dp,
+                                                )
+                                            },
+                                            onNavigateToExplore = onNavigateToExplore,
+                                            sharedTransitionScope = sharedTransitionScope,
+                                            animatedVisibilityScope = animatedVisibilityScope,
                                             contentPadding = PaddingValues(
                                                 horizontal = LocalPaddings.current.large,
                                                 vertical = LocalPaddings.current.large / 2,
                                             ) + insetAndNavigationPaddingValues.horizontalOnly
                                         )
                                     }
-                                    // TODO: Show error UI.
-                                    is Resource.Error -> {}
                                 }
+                                is Resource.Loading -> {
+                                    LoadingMediaSmallRow(
+                                        count = 10,
+                                        imageHeight = cardSize.gridImageHeight,
+                                        cardWidth = cardSize.gridCardWidth,
+                                        contentPadding = PaddingValues(
+                                            horizontal = LocalPaddings.current.large,
+                                            vertical = LocalPaddings.current.large / 2,
+                                        ) + insetAndNavigationPaddingValues.horizontalOnly
+                                    )
+                                }
+                                // TODO: Show error UI.
+                                is Resource.Error -> {}
                             }
                         }
-                    },
-                    contentPadding = PaddingValues(
-                        top = LocalPaddings.current.large / 2,
-                        bottom = LocalPaddings.current.large / 2 +
-                                insetAndNavigationPaddingValues.calculateBottomPadding()
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                )
+                    }
+                }
             }
         }
     }
@@ -174,6 +197,7 @@ private fun MangaRow(
     index: Int,
     title: String,
     mediaList: MediaList,
+    cardSize: MediaCardSize,
     onItemClicked: (Media.Small) -> Unit,
     onNavigateToExplore: (ExploreRoute) -> Unit,
     sharedTransitionScope: SharedTransitionScope,
@@ -209,6 +233,8 @@ private fun MangaRow(
                 tag = null,
                 label = media.title,
                 onClick = { onItemClicked(media) },
+                imageHeight = cardSize.gridImageHeight,
+                cardWidth = cardSize.gridCardWidth,
                 modifier = Modifier.sharedBounds(
                     sharedContentState = rememberSharedContentState(
                         SharedContentKey(

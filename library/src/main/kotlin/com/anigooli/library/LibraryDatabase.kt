@@ -115,6 +115,22 @@ interface LibraryDao {
     @Query("SELECT * FROM watch_history ORDER BY lastWatchedAt DESC")
     suspend fun getAllWatchHistoryOnce(): List<WatchHistoryEntity>
 
+    /** Fetches a single watch history entry by [anilistId]. */
+    @Query("SELECT * FROM watch_history WHERE anilistId = :anilistId LIMIT 1")
+    suspend fun getWatchHistoryById(anilistId: Int): WatchHistoryEntity?
+
+    /** Streams all watch history entries ordered most recently watched first. */
+    @Query("SELECT * FROM watch_history ORDER BY lastWatchedAt DESC")
+    fun observeWatchHistory(): Flow<List<WatchHistoryEntity>>
+
+    /** Deletes a single watch history entry by [anilistId]. */
+    @Query("DELETE FROM watch_history WHERE anilistId = :anilistId")
+    suspend fun deleteWatchHistory(anilistId: Int)
+
+    /** Clears all watch history entries. */
+    @Query("DELETE FROM watch_history")
+    suspend fun clearWatchHistory()
+
     // endregion
 
     // region Release Notification Tracker
@@ -129,8 +145,8 @@ interface LibraryDao {
 
     /** Fetches all distinct AniList IDs from offline anime list and watch history for release checks. */
     @Query(
-        "SELECT anilistId FROM offline_anime WHERE anilistId IS NOT NULL " +
-            "UNION SELECT anilistId FROM watch_history"
+        "SELECT anilistId FROM offline_anime WHERE anilistId IS NOT NULL AND anilistId > 0 " +
+            "UNION SELECT anilistId FROM watch_history WHERE anilistId > 0"
     )
     suspend fun getAllTrackedAnilistIds(): List<Int>
 
@@ -147,7 +163,7 @@ interface LibraryDao {
         WatchHistoryEntity::class,
         ReleaseTrackerEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class LibraryDatabase : RoomDatabase() {

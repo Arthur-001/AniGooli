@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
@@ -25,34 +26,42 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import com.imashnake.animite.explore.R
 
 /**
  * A Floating Action Button-esque collapsible search bar. When collapsed, it displays a search icon.
- * Expanding it reveals a text field with collapse and clear buttons.
+ * Expanding it reveals a text field with minimize and clear buttons, preserving entered text across
+ * minimize/expand cycles until explicitly cleared.
  *
  * @param isExpanded Whether the search FAB is currently "expanded".
  * @param setExpanded Called when [isExpanded] should be updated.
- * @param onSearched Called when the user searches for something. The query may be null, which
- * suggests nothing was entered in the text field.
+ * @param query Current preserved search query string.
+ * @param onQueryChange Called when the user edits the query text.
+ * @param onMinimize Called when the bar should collapse without clearing [query].
+ * @param onClear Called when the user explicitly clears [query] via the cross button.
  * @param modifier [Modifier].
  */
 @Composable
 fun SearchFab(
     isExpanded: Boolean,
     setExpanded: (expanded: Boolean) -> Unit,
-    onSearched: (query: String?) -> Unit,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onMinimize: () -> Unit,
+    onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -63,12 +72,10 @@ fun SearchFab(
         AnimatedContent(targetState = isExpanded, label = "expand_search_fab") { targetExpanded ->
             if (targetExpanded) {
                 ExpandedSearchBarContent(
-                    collapse = {
-                        setExpanded(false)
-                        onSearched(null)
-                    },
-                    clearText = { onSearched(null) },
-                    searchText = { onSearched(it) }
+                    query = query,
+                    collapse = onMinimize,
+                    clearText = onClear,
+                    searchText = onQueryChange,
                 )
             } else {
                 CollapsedSearchBarContent(
@@ -96,22 +103,32 @@ internal fun CollapsedSearchBarContent(
 
 @Composable
 internal fun ExpandedSearchBarContent(
+    query: String,
     collapse: () -> Unit,
     clearText: () -> Unit,
     searchText: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     LaunchedEffect(focusRequester) {
         focusRequester.requestFocus()
     }
 
-    var text by rememberSaveable { mutableStateOf("") }
+    var textFieldValue by remember {
+        mutableStateOf(TextFieldValue(text = query, selection = TextRange(query.length)))
+    }
+    LaunchedEffect(query) {
+        if (textFieldValue.text != query) {
+            textFieldValue = TextFieldValue(text = query, selection = TextRange(query.length))
+        }
+    }
+
     TextField(
-        value = text,
-        onValueChange = {
-            text = it
-            searchText(it)
+        value = textFieldValue,
+        onValueChange = { updated ->
+            textFieldValue = updated
+            searchText(updated.text)
         },
         modifier = modifier.focusRequester(focusRequester),
         textStyle = MaterialTheme.typography.labelLarge,
@@ -124,24 +141,34 @@ internal fun ExpandedSearchBarContent(
         singleLine = true,
         colors = searchTextFieldColors(),
         keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(
+            onSearch = {
+                keyboardController?.hide()
+                collapse()
+            }
+        ),
         leadingIcon = {
             IconButton(
-                onClick = collapse,
+                onClick = {
+                    keyboardController?.hide()
+                    collapse()
+                },
                 modifier = Modifier.size(dimensionResource(R.dimen.search_icon_size))
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    contentDescription = null
+                    contentDescription = "Minimize search bar"
                 )
             }
         },
         trailingIcon = {
             IconButton(
                 onClick = {
-                    if (text.isEmpty()) {
+                    if (textFieldValue.text.isEmpty()) {
+                        keyboardController?.hide()
                         collapse()
                     } else {
-                        text = ""
+                        textFieldValue = TextFieldValue("")
                         clearText()
                     }
                 },
@@ -149,15 +176,14 @@ internal fun ExpandedSearchBarContent(
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Close,
-                    contentDescription = null
+                    contentDescription = "Clear search text"
                 )
             }
         }
     )
 
     BackHandler {
-        text = ""
-        clearText()
+        keyboardController?.hide()
         collapse()
     }
 }

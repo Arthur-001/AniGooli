@@ -212,6 +212,9 @@ fun MediaPage(
     val streamingState by viewModel.streamingState.collectAsState()
     val audioTrack by viewModel.audioTrack.collectAsState()
     val subtitlesEnabled by viewModel.subtitlesEnabled.collectAsState()
+    val showEpisodeNames by viewModel.showEpisodeNames.collectAsState()
+    val censorshipVersion by viewModel.censorshipVersion.collectAsState()
+    val lastWatchedEpisode by viewModel.lastWatchedEpisode.collectAsState()
     val downloadsByEpisode by viewModel.downloadsByEpisode.collectAsState()
 
     var showDetailsSheet by remember { mutableStateOf(false) }
@@ -324,9 +327,15 @@ fun MediaPage(
                                                     streamingState = streamingState,
                                                     audioTrack = audioTrack,
                                                     subtitlesEnabled = subtitlesEnabled,
+                                                    showEpisodeNames = showEpisodeNames,
+                                                    censorshipVersion = censorshipVersion,
+                                                    lastWatchedEpisode = lastWatchedEpisode,
                                                     downloadsByEpisode = downloadsByEpisode,
                                                     onSelectAudio = viewModel::setAnimeAudioTrack,
                                                     onToggleSubtitles = viewModel::setAnimeSubtitlesEnabled,
+                                                    onToggleShowEpisodeNames = viewModel::toggleShowEpisodeNames,
+                                                    onSelectCensorshipVersion = viewModel::setCensorshipVersion,
+                                                    onLoadEpisodeNamesForNumber = viewModel::loadEpisodeNamesForEpisode,
                                                     onWatchEpisode = viewModel::watchEpisode,
                                                     onDownloadEpisode = viewModel::downloadEpisode,
                                                     onPauseDownload = viewModel::pauseDownload,
@@ -1720,9 +1729,19 @@ private fun LoadingMediaGenres(modifier: Modifier = Modifier) {
     }
 }
 
+/** Navigation route for the anime/manga details and streaming page. */
 @Serializable
 data class MediaPage(
+    /** AniList media ID (or negative synthetic ID for provider-only entries). */
     val id: Int,
+    /** Navigation source identifier for shared element transitions. */
     val source: String,
+    /** Media type raw value ("ANIME" or "MANGA"). */
     val mediaType: String,
+    /** Optional streaming provider ID for provider-only / pre-resolved entries. */
+    val providerId: String? = null,
+    /** Optional MyAnimeList ID for metadata fallback when AniList entry is absent. */
+    val malId: Int? = null,
+    /** Optional display title fallback when AniList entry is absent. */
+    val fallbackTitle: String? = null,
 )

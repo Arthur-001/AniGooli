@@ -10,6 +10,8 @@ import com.imashnake.animite.api.anilist.AnilistUserRepository
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.type.ScoreFormat
 import com.imashnake.animite.api.preferences.AUDIO_TRACK_JAPANESE
+import com.imashnake.animite.api.preferences.CARD_SIZE_COMPACT
+import com.imashnake.animite.api.preferences.CENSORSHIP_UNCENSORED
 import com.imashnake.animite.api.preferences.DEFAULT_PRE_BUFFER_MB
 import com.imashnake.animite.api.preferences.DEFAULT_STREAM_QUALITY
 import com.imashnake.animite.api.preferences.PLAYER_IN_APP
@@ -97,6 +99,11 @@ class SettingsViewModel @Inject constructor(
     val notifySeasonsMovies = preferencesRepository.notifySeasonsMovies.map { it ?: true }
     val notifyOvas = preferencesRepository.notifyOvas.map { it ?: true }
     val notifyMangas = preferencesRepository.notifyMangas.map { it ?: true }
+    /** Global card size preference across Anime, Manga, and Explore pages. */
+    val mediaCardSize = preferencesRepository.mediaCardSize.map { it ?: CARD_SIZE_COMPACT }
+    /** Global default anime version preference (Uncensored vs Censored). */
+    val defaultCensorshipVersion =
+        preferencesRepository.defaultCensorshipVersion.map { it ?: CENSORSHIP_UNCENSORED }
 
     private val _extractorStatus = MutableStateFlow<ExtractorStatus?>(null)
     val extractorStatus = _extractorStatus.asStateFlow()
@@ -263,5 +270,15 @@ class SettingsViewModel @Inject constructor(
 
     fun setNotifyMangas(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
         preferencesRepository.setNotifyMangas(enabled)
+    }
+
+    /** Updates the global media card size preference across Anime, Manga, and Explore. */
+    fun setMediaCardSize(size: String) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setMediaCardSize(size)
+    }
+
+    /** Updates the global default anime censorship version preference. */
+    fun setDefaultCensorshipVersion(version: String) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setDefaultCensorshipVersion(version)
     }
 }

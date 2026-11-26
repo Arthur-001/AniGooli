@@ -30,6 +30,7 @@ dependencies {
     implementation(projects.core.ui)
     implementation(projects.media)
     implementation(projects.navigation)
+    implementation(projects.streaming)
 
     // AndroidX
     implementation(libs.androidx.activityCompose)

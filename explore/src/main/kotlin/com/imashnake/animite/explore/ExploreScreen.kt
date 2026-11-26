@@ -120,11 +120,13 @@ import androidx.compose.ui.util.fastForEachIndexed
 import androidx.compose.ui.util.fastMap
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import com.anigooli.streaming.ProviderAnime
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import com.imashnake.animite.api.anilist.type.MediaType
 import com.imashnake.animite.core.resource.Resource
 import com.imashnake.animite.core.ui.LocalPaddings
 import com.imashnake.animite.core.ui.component.BottomSheet
+import com.imashnake.animite.core.ui.component.CardSizeStepper
 import com.imashnake.animite.core.ui.component.ChipFlowRow
 import com.imashnake.animite.core.ui.component.ConfirmButton
 import com.imashnake.animite.core.ui.component.DropDownIcon
@@ -148,7 +150,7 @@ import com.imashnake.animite.navigation.R as navigationR
 )
 @Composable
 fun ExploreScreen(
-    onItemClick: (Int, MediaType) -> Unit,
+    onItemClick: (Int, MediaType, ProviderAnime?) -> Unit,
     listState: LazyListState,
     deviceScreenCornerRadius: Int,
     modifier: Modifier = Modifier,
@@ -187,6 +189,7 @@ fun ExploreScreen(
     val chipGenreGroup by viewModel.chipGenreGroup.collectAsState()
     val chipFormatGroup by viewModel.chipFormatGroup.collectAsState()
     val chipStatusGroup by viewModel.chipStatusGroup.collectAsState()
+    val cardSize by viewModel.cardSize.collectAsState()
 
     var isRefreshing by remember { mutableStateOf(false) }
     val pullToRefreshState = rememberPullToRefreshState()
@@ -257,29 +260,40 @@ fun ExploreScreen(
                 }
             }
 
-            Sort(
-                sorts = Media.Sort.entries.fastFilter {
-                    when (mediaType) {
-                        MediaType.MANGA.name -> it != Media.Sort.EPISODES
-                        else -> true
-                    }
-                }.toImmutableList(),
-                selectedSort = selectedSort,
-                onSortSelected = { viewModel.setMediaSort(it) },
-                isDescending = isDescending,
-                toggleOrder = { viewModel.setIsDescending(!isDescending) },
-                expanded = isSortDropdownExpanded,
-                setExpanded = {
-                    haptic.performHapticFeedback(
-                        if (it) {
-                            HapticFeedbackType.ToggleOn
-                        } else HapticFeedbackType.ToggleOff
-                    )
-                    isSortDropdownExpanded = it
-                },
-                insetAndNavigationPaddingValues = insetAndNavigationPaddingValues,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = LocalPaddings.current.large),
+            ) {
+                Sort(
+                    sorts = Media.Sort.entries.fastFilter {
+                        when (mediaType) {
+                            MediaType.MANGA.name -> it != Media.Sort.EPISODES
+                            else -> true
+                        }
+                    }.toImmutableList(),
+                    selectedSort = selectedSort,
+                    onSortSelected = { viewModel.setMediaSort(it) },
+                    isDescending = isDescending,
+                    toggleOrder = { viewModel.setIsDescending(!isDescending) },
+                    expanded = isSortDropdownExpanded,
+                    setExpanded = {
+                        haptic.performHapticFeedback(
+                            if (it) {
+                                HapticFeedbackType.ToggleOn
+                            } else HapticFeedbackType.ToggleOff
+                        )
+                        isSortDropdownExpanded = it
+                    },
+                    insetAndNavigationPaddingValues = insetAndNavigationPaddingValues,
+                    modifier = Modifier.weight(1f),
+                )
+                CardSizeStepper(
+                    currentSize = cardSize,
+                    onSizeChange = viewModel::setCardSize,
+                )
+            }
         }
 
         Column(Modifier.padding(insetAndNavigationPaddingValues.horizontalOnly)) {
@@ -309,10 +323,17 @@ fun ExploreScreen(
                             mediaMediumList = explorePage?.data?.list
                                 .orEmpty()
                                 .toImmutableList(),
-                            onItemClick = { id -> onItemClick(id, MediaType.valueOf(mediaType)) },
+                            onItemClick = { id ->
+                                onItemClick(
+                                    id,
+                                    MediaType.valueOf(mediaType),
+                                    viewModel.getProviderEntry(id),
+                                )
+                            },
                             pageInfo = explorePage?.data?.info,
                             onPageChanged = viewModel::setPage,
                             shouldShowRank = true,
+                            cardSize = cardSize,
                             modifier = Modifier
                                 .consumeWindowInsets(
                                     insetAndNavigationPaddingValues
@@ -333,6 +354,7 @@ fun ExploreScreen(
                 } else {
                     LoadingMediaMediumList(
                         count = 10,
+                        cardSize = cardSize,
                         contentPadding = PaddingValues(
                             bottom = LocalPaddings.current.large,
                             start = LocalPaddings.current.large,

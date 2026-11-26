@@ -4,9 +4,11 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
+import com.anigooli.streaming.ProviderAnime
 import com.imashnake.animite.api.anilist.AnilistMediaRepository
 import com.imashnake.animite.api.anilist.sanitize.explore.FilterStrategy
 import com.imashnake.animite.api.anilist.sanitize.media.Media
+import com.imashnake.animite.api.anilist.sanitize.media.Page
 import com.imashnake.animite.api.anilist.sanitize.settings.Prefs
 import com.imashnake.animite.api.anilist.type.MediaFormat
 import com.imashnake.animite.api.anilist.type.MediaSeason
@@ -16,6 +18,8 @@ import com.imashnake.animite.api.preferences.PreferencesRepository
 import com.imashnake.animite.core.resource.Resource
 import com.imashnake.animite.core.resource.Resource.Companion.asResource
 import com.imashnake.animite.core.ui.Constants
+import com.imashnake.animite.core.ui.component.MediaCardSize
+import com.imashnake.animite.explore.searchbar.ProviderSearchHelper
 import com.imashnake.animite.navigation.ExploreRoute
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
@@ -49,9 +53,22 @@ import kotlin.time.Duration.Companion.milliseconds
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExploreViewModel @Inject constructor(
     private val mediaListRepository: AnilistMediaRepository,
+    private val providerSearchHelper: ProviderSearchHelper,
     private val savedStateHandle: SavedStateHandle,
-    preferencesRepository: PreferencesRepository,
+    private val preferencesRepository: PreferencesRepository,
 ) : ViewModel() {
+    /** Effective card size for the Explore tab (per-page override falling back to global preference). */
+    val cardSize = combine(
+        preferencesRepository.exploreCardSize,
+        preferencesRepository.mediaCardSize,
+    ) { pageOverride, globalDefault ->
+        MediaCardSize.safeValueOf(pageOverride ?: globalDefault)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(1000), MediaCardSize.COMPACT)
+
+    /** Updates and saves the card size preference for the Explore tab. */
+    fun setCardSize(size: MediaCardSize) = viewModelScope.launch {
+        preferencesRepository.setExploreCardSize(size.name)
+    }
     private val navArgs = savedStateHandle.toRoute<ExploreRoute>()
 
     private val refreshTrigger = MutableSharedFlow<Unit>()
@@ -259,12 +276,22 @@ class ExploreViewModel @Inject constructor(
     }.flatMapLatest { (filterStrategy, _) ->
         flow {
             emit(Resource.loading())
-            emit(
-                mediaListRepository
-                    .fetchMediaMediumList(useNetwork, filterStrategy)
-                    .asResource()
-                    .firstOrNull()
-            )
+            val anilistResource = mediaListRepository
+                .fetchMediaMediumList(useNetwork, filterStrategy)
+                .asResource()
+                .firstOrNull()
+            val query = filterStrategy.search?.trim()
+            if (!query.isNullOrEmpty() &&
+                filterStrategy.mediaType == MediaType.ANIME &&
+                filterStrategy.page == 1
+            ) {
+                val baseList = anilistResource?.data?.list.orEmpty()
+                val merged = providerSearchHelper.mergeProviderResults(query, baseList)
+                val mergedPage = anilistResource?.data?.copy(list = merged) ?: Page(list = merged, info = null)
+                emit(Resource.success(mergedPage))
+            } else {
+                emit(anilistResource)
+            }
         }
     }
     .stateIn(
@@ -272,6 +299,9 @@ class ExploreViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(1000),
         initialValue = Resource.loading()
     )
+
+    /** Returns provider metadata for [mediaId] when resolved via ani-cli fallback. */
+    fun getProviderEntry(mediaId: Int): ProviderAnime? = providerSearchHelper.getProviderEntry(mediaId)
 
     fun setMediaSort(sort: Media.Sort) {
         savedStateHandle[Constants.SORT] = sort

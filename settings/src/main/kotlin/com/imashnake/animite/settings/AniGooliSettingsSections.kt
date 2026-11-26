@@ -43,11 +43,15 @@ import com.anigooli.downloads.PreBufferPolicy
 import com.anigooli.streaming.QualitySelector
 import com.imashnake.animite.api.preferences.AUDIO_TRACK_ENGLISH_DUB
 import com.imashnake.animite.api.preferences.AUDIO_TRACK_JAPANESE
+import com.imashnake.animite.api.preferences.CARD_SIZE_COMPACT
+import com.imashnake.animite.api.preferences.CENSORSHIP_CENSORED
+import com.imashnake.animite.api.preferences.CENSORSHIP_UNCENSORED
 import com.imashnake.animite.api.preferences.DEFAULT_PRE_BUFFER_MB
 import com.imashnake.animite.api.preferences.DEFAULT_STREAM_QUALITY
 import com.imashnake.animite.api.preferences.PLAYER_IN_APP
 import com.imashnake.animite.api.preferences.PLAYER_MPV
 import com.imashnake.animite.core.ui.LocalPaddings
+import com.imashnake.animite.core.ui.component.MediaCardSize
 import java.util.Locale
 
 private const val BYTES_PER_MB = 1024.0 * 1024.0
@@ -55,6 +59,7 @@ private const val BYTES_PER_MB = 1024.0 * 1024.0
 /** Renders AniGooli's Streaming, Pre-Buffering, Release Notifications, and Social shortcut sections inside Settings. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+@Suppress("LongMethod")
 internal fun AniGooliSettingsSections(
     viewModel: SettingsViewModel,
     isDarkMode: Boolean,
@@ -82,6 +87,8 @@ internal fun AniGooliSettingsSections(
     val notifySeasonsMovies by viewModel.notifySeasonsMovies.collectAsState(initial = true)
     val notifyOvas by viewModel.notifyOvas.collectAsState(initial = true)
     val notifyMangas by viewModel.notifyMangas.collectAsState(initial = true)
+    val mediaCardSize by viewModel.mediaCardSize.collectAsState(initial = CARD_SIZE_COMPACT)
+    val defaultCensorship by viewModel.defaultCensorshipVersion.collectAsState(initial = CENSORSHIP_UNCENSORED)
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -149,6 +156,40 @@ internal fun AniGooliSettingsSections(
                 ) {
                     Text("English Subtitles ON by default", style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = defaultSubs, onCheckedChange = viewModel::setDefaultSubtitlesEnabled)
+                }
+
+                Text(
+                    text = "Preferred Anime Version",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = defaultCensorship == CENSORSHIP_UNCENSORED,
+                        onClick = { viewModel.setDefaultCensorshipVersion(CENSORSHIP_UNCENSORED) },
+                        label = { Text("Uncensored") },
+                    )
+                    FilterChip(
+                        selected = defaultCensorship == CENSORSHIP_CENSORED,
+                        onClick = { viewModel.setDefaultCensorshipVersion(CENSORSHIP_CENSORED) },
+                        label = { Text("Censored") },
+                    )
+                }
+
+                Text(
+                    text = "Media Card Size (Anime, Manga, Explore)",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    MediaCardSize.entries.forEach { size ->
+                        FilterChip(
+                            selected = mediaCardSize.equals(size.name, ignoreCase = true),
+                            onClick = { viewModel.setMediaCardSize(size.name) },
+                            label = { Text(size.label) },
+                        )
+                    }
                 }
 
                 Text(text = "Preferred Player", style = MaterialTheme.typography.titleSmall)

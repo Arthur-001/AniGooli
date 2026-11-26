@@ -185,6 +185,8 @@ data class AnimePlaybackPrefsEntity(
     val lastEpisode: String? = null,
     /** Saved playback resume position in milliseconds. */
     val lastPositionMs: Long = 0L,
+    /** Remembered censorship version preference ("UNCENSORED" or "CENSORED"), or null for global default. */
+    val censorshipVersion: String? = null,
     /** Last update timestamp in epoch millis. */
     val updatedAt: Long,
 )
@@ -192,7 +194,7 @@ data class AnimePlaybackPrefsEntity(
 /** Record of anime streamed in AniGooli (used alongside offline list for release notifications). */
 @Entity(tableName = "watch_history")
 data class WatchHistoryEntity(
-    /** AniList ID of the streamed anime. */
+    /** AniList ID of the streamed anime (negative synthetic ID for provider-only entries). */
     @PrimaryKey val anilistId: Int,
     /** Display title of the anime. */
     val title: String,
@@ -202,6 +204,10 @@ data class WatchHistoryEntity(
     val lastEpisodeWatched: String,
     /** Timestamp when last watched in epoch millis. */
     val lastWatchedAt: Long,
+    /** Optional streaming provider ID for provider-only entries. */
+    val providerId: String? = null,
+    /** Optional MyAnimeList ID for fallback metadata resolution. */
+    val malId: Int? = null,
 )
 
 /** Snapshot of known episodes & related media IDs for release notifications diffing. */

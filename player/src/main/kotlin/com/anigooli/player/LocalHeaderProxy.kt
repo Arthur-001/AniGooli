@@ -41,6 +41,7 @@ class LocalHeaderProxy @Inject constructor(
     private val okHttpClient: OkHttpClient,
 ) {
     private val entries = ConcurrentHashMap<String, ProxyStreamEntry>()
+    private val masterPlaylists = ConcurrentHashMap<String, String>()
     private val executor = Executors.newCachedThreadPool()
     private var serverSocket: ServerSocket? = null
     private var port: Int = 0
@@ -57,6 +58,38 @@ class LocalHeaderProxy @Inject constructor(
         val token = UUID.randomUUID().toString()
         entries[token] = ProxyStreamEntry(targetUrl, referer, origin, userAgent)
         return "http://127.0.0.1:$port/stream/$token"
+    }
+
+    /**
+     * Registers a split video + audio HLS stream pair and returns a virtual master `.m3u8` URL
+     * so external players such as MPV automatically attach the audio track with required headers.
+     */
+    @Synchronized
+    fun registerCombinedHlsStream(
+        videoUrl: String,
+        audioUrl: String,
+        referer: String,
+        origin: String,
+        userAgent: String = ExtractorConfig.DEFAULT_USER_AGENT,
+    ): String {
+        ensureStarted()
+        val videoProxyUrl = registerStream(videoUrl, referer, origin, userAgent)
+        val audioProxyUrl = registerStream(audioUrl, referer, origin, userAgent)
+        val masterToken = UUID.randomUUID().toString()
+        val playlist = buildString {
+            append("#EXTM3U\n")
+            append("#EXT-X-VERSION:3\n")
+            append(
+                """#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Default",DEFAULT=YES,AUTOSELECT=YES,URI="$audioProxyUrl"""",
+            )
+            append("\n")
+            append("""#EXT-X-STREAM-INF:BANDWIDTH=4000000,AUDIO="audio"""")
+            append("\n")
+            append(videoProxyUrl)
+            append("\n")
+        }
+        masterPlaylists[masterToken] = playlist
+        return "http://127.0.0.1:$port/master/$masterToken.m3u8"
     }
 
     private fun ensureStarted() {
@@ -79,6 +112,7 @@ class LocalHeaderProxy @Inject constructor(
                 val requestLine = reader.readLine() ?: return
                 val parts = requestLine.split(" ")
                 if (parts.size < 2) return
+                val isHead = parts[0].equals("HEAD", ignoreCase = true)
                 val pathAndQuery = parts[1]
 
                 var rangeHeader: String? = null
@@ -91,13 +125,35 @@ class LocalHeaderProxy @Inject constructor(
                 }
 
                 val out = sock.getOutputStream()
+                if (pathAndQuery.startsWith("/master/")) {
+                    val token = pathAndQuery.removePrefix("/master/")
+                        .substringBefore("?")
+                        .removeSuffix(".m3u8")
+                    val playlist = masterPlaylists[token]
+                    if (playlist == null) {
+                        writeSimpleResponse(out, HTTP_NOT_FOUND, "Not Found", isHead)
+                    } else {
+                        val bytes = playlist.toByteArray(Charsets.UTF_8)
+                        val hdr = buildString {
+                            append("HTTP/1.1 200 OK\r\n")
+                            append("Content-Type: application/vnd.apple.mpegurl\r\n")
+                            append("Content-Length: ${bytes.size}\r\n")
+                            append("Connection: close\r\n\r\n")
+                        }
+                        out.write(hdr.toByteArray(Charsets.US_ASCII))
+                        if (!isHead) out.write(bytes)
+                        out.flush()
+                    }
+                    return
+                }
+
                 val resolved = resolveTarget(pathAndQuery)
                 if (resolved == null) {
-                    writeSimpleResponse(out, HTTP_NOT_FOUND, "Not Found")
+                    writeSimpleResponse(out, HTTP_NOT_FOUND, "Not Found", isHead)
                     return
                 }
                 val (token, entry, upstreamUrl) = resolved
-                forwardRequest(token, entry, upstreamUrl, rangeHeader, out)
+                forwardRequest(token, entry, upstreamUrl, rangeHeader, isHead, out)
             }.onFailure { err ->
                 Log.d(TAG, "Proxy client closed: ${err.message}")
             }
@@ -129,6 +185,7 @@ class LocalHeaderProxy @Inject constructor(
         entry: ProxyStreamEntry,
         upstreamUrl: String,
         rangeHeader: String?,
+        isHead: Boolean,
         out: OutputStream,
     ) {
         val builder = Request.Builder()
@@ -139,7 +196,7 @@ class LocalHeaderProxy @Inject constructor(
         if (!rangeHeader.isNullOrBlank()) builder.header("Range", rangeHeader)
 
         val resp = runCatching { okHttpClient.newCall(builder.build()).execute() }.getOrElse {
-            writeSimpleResponse(out, HTTP_BAD_GATEWAY, "Upstream error")
+            writeSimpleResponse(out, HTTP_BAD_GATEWAY, "Upstream error", isHead)
             return
         }
 
@@ -148,7 +205,7 @@ class LocalHeaderProxy @Inject constructor(
             val isM3u8 = upstreamUrl.substringBefore('?').endsWith(".m3u8", true) ||
                 contentType.contains("mpegurl", ignoreCase = true)
             val body = r.body ?: run {
-                writeSimpleResponse(out, r.code, "")
+                writeSimpleResponse(out, r.code, "", isHead)
                 return
             }
 
@@ -162,7 +219,7 @@ class LocalHeaderProxy @Inject constructor(
                     append("Connection: close\r\n\r\n")
                 }
                 out.write(hdr.toByteArray(Charsets.US_ASCII))
-                out.write(bytes)
+                if (!isHead) out.write(bytes)
                 out.flush()
             } else {
                 val hdr = buildString {
@@ -174,12 +231,14 @@ class LocalHeaderProxy @Inject constructor(
                     append("Connection: close\r\n\r\n")
                 }
                 out.write(hdr.toByteArray(Charsets.US_ASCII))
-                val buf = ByteArray(PROXY_BUFFER_SIZE)
-                val input = body.byteStream()
-                while (true) {
-                    val read = input.read(buf)
-                    if (read <= 0) break
-                    out.write(buf, 0, read)
+                if (!isHead) {
+                    val buf = ByteArray(PROXY_BUFFER_SIZE)
+                    val input = body.byteStream()
+                    while (true) {
+                        val read = input.read(buf)
+                        if (read <= 0) break
+                        out.write(buf, 0, read)
+                    }
                 }
                 out.flush()
             }
@@ -212,11 +271,16 @@ class LocalHeaderProxy @Inject constructor(
         return "http://127.0.0.1:$port/proxy?t=$token&u=$encUrl"
     }
 
-    private fun writeSimpleResponse(out: OutputStream, code: Int, message: String) {
+    private fun writeSimpleResponse(
+        out: OutputStream,
+        code: Int,
+        message: String,
+        isHead: Boolean = false,
+    ) {
         val bytes = message.toByteArray(Charsets.UTF_8)
         val hdr = "HTTP/1.1 $code $message\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
         out.write(hdr.toByteArray(Charsets.US_ASCII))
-        out.write(bytes)
+        if (!isHead) out.write(bytes)
         out.flush()
     }
 }
