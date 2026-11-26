@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Cookie
 import okhttp3.CookieJar
+import okhttp3.FormBody
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -105,6 +106,26 @@ class CloudflareAwareHttpClient @Inject constructor(
                 return@withContext HttpFetchResult(statusCode = HTTP_OK, body = resolvedHtml)
             }
         }
+        if (code !in HTTP_OK..HTTP_OK_MAX && body.isBlank()) {
+            throw IOException("HTTP $code from $url")
+        }
+        HttpFetchResult(statusCode = code, body = body)
+    }
+
+    /** Performs an HTTP form POST request and returns the response status and body. */
+    suspend fun postForm(
+        url: String,
+        formParams: Map<String, String>,
+        headers: Map<String, String> = emptyMap(),
+    ): HttpFetchResult = withContext(Dispatchers.IO) {
+        val formBuilder = FormBody.Builder()
+        formParams.forEach { (k, v) -> formBuilder.add(k, v) }
+        val requestBuilder = Request.Builder().url(url).post(formBuilder.build())
+        headers.forEach { (k, v) -> requestBuilder.header(k, v) }
+        val response = okHttpClient.newCall(requestBuilder.build()).execute()
+        val code = response.code
+        val body = response.body?.string().orEmpty()
+        response.close()
         if (code !in HTTP_OK..HTTP_OK_MAX && body.isBlank()) {
             throw IOException("HTTP $code from $url")
         }
