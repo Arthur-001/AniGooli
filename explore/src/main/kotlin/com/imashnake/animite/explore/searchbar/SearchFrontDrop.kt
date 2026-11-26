@@ -52,6 +52,7 @@ import com.imashnake.animite.core.ui.LocalPaddings
 import com.imashnake.animite.core.ui.ext.copy
 import com.imashnake.animite.explore.MediaMediumList
 import com.imashnake.animite.explore.R
+import kotlinx.collections.immutable.persistentListOf
 import com.imashnake.animite.navigation.R as navigationR
 
 /**
@@ -114,7 +115,7 @@ fun SearchFrontDrop(
                     onClick = {},
                 )
         ) {
-            val results = searchList.data.orEmpty()
+            val results = searchList.data ?: persistentListOf()
             val isLoading = searchList is Resource.Loading
 
             if (results.isNotEmpty()) {
