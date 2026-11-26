@@ -30,6 +30,109 @@ private val franchiseRelations = setOf(
     Media.Relation.SOURCE,
 )
 
+/**
+ * Normalizes anime/manga titles, extracts sequence numbers, and checks whether two media entries
+ * belong to the same franchise by title (used to safely admit `OTHER` sequels like
+ * `Cyberpunk: Edgerunners` -> `Cyberpunk: Edgerunners 2` while rejecting unrelated crossovers).
+ */
+internal object FranchiseTitleMatcher {
+
+    private val seasonKeywordRegex = Regex(
+        """(?i)\s*[-:–—]?\s*(?:the\s+)?(?:season|series|part|cour)\s*(\d+)\s*$"""
+    )
+    private val ordinalSeasonRegex = Regex(
+        """(?i)\s*[-:–—]?\s*(\d+)(?:st|nd|rd|th)\s+season\s*$"""
+    )
+    private val shortSeasonRegex = Regex("""\s*[-:–—]?\s*S(\d{1,2})\s*$""")
+    private val romanSuffixRegex = Regex("""\s*[-:–—]?\s*(II|III|IV|V|VI|VII|VIII|IX|X)\s*$""")
+    private val trailingNumberRegex = Regex("""\s+(\d{1,2})\s*$""")
+    private val mediaSuffixRegex = Regex(
+        """(?i)\s*[-:–—]?\s*(?:the\s+movie|movie|ova|specials?)\s*$"""
+    )
+    private val nonWordRegex = Regex("""[^\p{L}\p{N}\s]+""")
+    private val multiSpaceRegex = Regex("""\s+""")
+
+    private val romanValues = mapOf(
+        "I" to 1, "II" to 2, "III" to 3, "IV" to 4, "V" to 5,
+        "VI" to 6, "VII" to 7, "VIII" to 8, "IX" to 9, "X" to 10,
+    )
+
+    /** Extracts a trailing season/part/sequence number from [title], if present. */
+    fun extractSequenceNumber(title: String): Int? {
+        val trimmed = title.trim()
+        seasonKeywordRegex.find(trimmed)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it }
+        ordinalSeasonRegex.find(trimmed)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it }
+        shortSeasonRegex.find(trimmed)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it }
+        romanSuffixRegex.find(trimmed)?.groupValues?.getOrNull(1)?.let { roman ->
+            romanValues[roman]?.let { return it }
+        }
+        val numMatch = trailingNumberRegex.find(trimmed)
+        if (numMatch != null) {
+            val prefix = trimmed.substring(0, numMatch.range.first).trim()
+            if (prefix.length >= 3) {
+                numMatch.groupValues[1].toIntOrNull()?.let { return it }
+            }
+        }
+        return null
+    }
+
+    /** Returns the best-effort sequence number across all known titles of [media]. */
+    fun sequenceNumber(media: Media.Small): Int? {
+        val titles = listOfNotNull(media.englishTitle, media.romajiTitle, media.title)
+        return titles.firstNotNullOfOrNull { extractSequenceNumber(it) }
+    }
+
+    /** Strips trailing season/part/numbering/format suffixes and normalizes punctuation. */
+    fun baseTitle(title: String): String {
+        var s = title.trim()
+        var changed = true
+        while (changed) {
+            changed = false
+            for (regex in listOf(seasonKeywordRegex, ordinalSeasonRegex, shortSeasonRegex, romanSuffixRegex, mediaSuffixRegex)) {
+                val next = regex.replace(s, "").trim()
+                if (next != s && next.length >= 3) {
+                    s = next
+                    changed = true
+                }
+            }
+            val numMatch = trailingNumberRegex.find(s)
+            if (numMatch != null) {
+                val prefix = s.substring(0, numMatch.range.first).trim()
+                if (prefix.length >= 3) {
+                    s = prefix
+                    changed = true
+                }
+            }
+        }
+        return nonWordRegex.replace(s.lowercase(), " ")
+            .let { multiSpaceRegex.replace(it, " ") }
+            .trim()
+    }
+
+    /** Returns true when [a] and [b] share the same base title or a substantial word-boundary prefix. */
+    fun areRelated(a: Media.Small, b: Media.Small): Boolean {
+        val titlesA = listOfNotNull(a.title, a.englishTitle, a.romajiTitle, a.nativeTitle)
+            .map(::baseTitle)
+            .filter { it.isNotEmpty() }
+            .distinct()
+        val titlesB = listOfNotNull(b.title, b.englishTitle, b.romajiTitle, b.nativeTitle)
+            .map(::baseTitle)
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+        for (ba in titlesA) {
+            for (bb in titlesB) {
+                if (ba == bb) return true
+                val (shorter, longer) = if (ba.length <= bb.length) ba to bb else bb to ba
+                if (shorter.length >= 5 && longer.startsWith("$shorter ")) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+}
+
 /** Graph node holding a media summary and its outgoing AniList relation edges. */
 data class FranchiseNode(
     /** Sanitized media summary. */
@@ -73,6 +176,7 @@ object FranchiseOrganizer {
         { it.startYear ?: it.seasonYear ?: UNKNOWN_YEAR },
         { it.startMonth ?: UNKNOWN_MONTH },
         { it.startDay ?: UNKNOWN_DAY },
+        { FranchiseTitleMatcher.sequenceNumber(it) ?: Int.MAX_VALUE },
         { it.id },
     )
 
@@ -87,16 +191,43 @@ object FranchiseOrganizer {
         nodesById.values.forEach { node ->
             allNodes.putIfAbsent(node.media.id, node)
             node.edges.forEach { (rel, target) ->
-                if (rel in franchiseRelations && target.format != Media.Format.MUSIC) {
+                if (target.format != Media.Format.MUSIC &&
+                    (rel in franchiseRelations ||
+                        (rel == Media.Relation.OTHER && FranchiseTitleMatcher.areRelated(node.media, target)))
+                ) {
                     allNodes.putIfAbsent(target.id, FranchiseNode(media = target, relationType = rel))
                 }
             }
         }
 
+        // Track ONAs explicitly marked as SIDE_STORY (e.g. chibi shorts) so they stay in OVAs & Specials.
+        val sideStoryIds = HashSet<Int>()
+        allNodes.values.forEach { node ->
+            if (node.relationType == Media.Relation.SIDE_STORY) {
+                sideStoryIds.add(node.media.id)
+            }
+            node.edges.forEach { (rel, target) ->
+                if (rel == Media.Relation.SIDE_STORY) {
+                    sideStoryIds.add(target.id)
+                }
+            }
+        }
+
+        val hasStandardMainFormat = allNodes.values.any { node ->
+            node.media.type == Media.Small.Type.ANIME &&
+                (node.media.format in mainFormats || node.media.format == null)
+        }
+
         val mainNodes = allNodes.values.filter { node ->
             val fmt = node.media.format
-            node.media.type == Media.Small.Type.ANIME && (fmt in mainFormats || fmt == null)
+            if (node.media.type != Media.Small.Type.ANIME) return@filter false
+            when {
+                fmt in mainFormats || fmt == null -> true
+                fmt == Media.Format.ONA -> !hasStandardMainFormat || node.media.id !in sideStoryIds
+                else -> false
+            }
         }
+        val mainIds = mainNodes.map { it.media.id }.toSet()
         val orderedMain = topologicalChronologicalSort(mainNodes, allNodes).mapIndexed { idx, node ->
             FranchiseEntry(
                 media = node.media,
@@ -107,7 +238,11 @@ object FranchiseOrganizer {
         }
 
         val orderedOvas = allNodes.values
-            .filter { it.media.type == Media.Small.Type.ANIME && it.media.format in ovaFormats }
+            .filter {
+                it.media.type == Media.Small.Type.ANIME &&
+                    it.media.format in ovaFormats &&
+                    it.media.id !in mainIds
+            }
             .sortedWith { a, b -> chronologicalComparator.compare(a.media, b.media) }
             .mapIndexed { idx, node ->
                 FranchiseEntry(
@@ -262,8 +397,9 @@ class FranchiseResolver(
         var frontier = rootMedia.relations
             .filter { (rel, target) ->
                 target.id != rootMedia.id &&
-                    rel in franchiseRelations &&
-                    target.format != Media.Format.MUSIC
+                    target.format != Media.Format.MUSIC &&
+                    (rel in franchiseRelations ||
+                        (rel == Media.Relation.OTHER && FranchiseTitleMatcher.areRelated(rootSmall, target)))
             }
             .map { it.second.id }
             .distinct()
@@ -280,8 +416,9 @@ class FranchiseResolver(
                 collected[node.media.id] = node
                 for ((rel, target) in node.edges) {
                     if (target.id !in collected &&
-                        rel in expansionRelations &&
-                        target.format != Media.Format.MUSIC
+                        target.format != Media.Format.MUSIC &&
+                        (rel in expansionRelations ||
+                            (rel == Media.Relation.OTHER && FranchiseTitleMatcher.areRelated(node.media, target)))
                     ) {
                         nextFrontier.add(target.id)
                     }

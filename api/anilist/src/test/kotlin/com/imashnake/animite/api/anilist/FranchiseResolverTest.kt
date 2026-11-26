@@ -82,4 +82,78 @@ class FranchiseResolverTest {
         assertTrue(organized.ovasAndSpecials.isEmpty())
         assertTrue(organized.mangas.isEmpty())
     }
+
+    @Test
+    fun `includes title-matched OTHER ONA sequels like Cyberpunk Edgerunners 1 and 2 in main seasons`() {
+        val cp1 = mediaNode(120377, Media.Small.Type.ANIME, Media.Format.ONA, "Cyberpunk: Edgerunners", 2022, 9)
+        val cp2 = mediaNode(195539, Media.Small.Type.ANIME, Media.Format.ONA, "Cyberpunk: Edgerunners 2", 2026, 10)
+        val music = mediaNode(154591, Media.Small.Type.ANIME, Media.Format.MUSIC, "Let You Down", 2022, 9)
+        val manga = mediaNode(185521, Media.Small.Type.MANGA, Media.Format.MANGA, "Cyberpunk: Edgerunners MADNESS", 2025, 1)
+
+        val graph = mapOf(
+            120377 to FranchiseNode(
+                cp1,
+                edges = listOf(
+                    Media.Relation.OTHER to cp2,
+                    Media.Relation.CHARACTER to music,
+                    Media.Relation.PREQUEL to manga,
+                ),
+            ),
+            195539 to FranchiseNode(
+                cp2,
+                edges = listOf(Media.Relation.OTHER to cp1),
+            ),
+        )
+
+        val organized = FranchiseOrganizer.organize(rootMedia = cp1, nodesById = graph, mangaNewestFirst = false)
+        assertEquals(listOf(120377, 195539), organized.mainSeasonsAndMovies.map { it.media.id })
+        assertEquals(listOf(1, 2), organized.mainSeasonsAndMovies.map { it.orderIndex })
+        assertTrue(organized.ovasAndSpecials.isEmpty())
+        assertEquals(listOf(185521), organized.mangas.map { it.media.id })
+    }
+
+    @Test
+    fun `keeps SIDE_STORY ONAs in OVAs & Specials when main TV seasons exist`() {
+        val tv1 = mediaNode(161645, Media.Small.Type.ANIME, Media.Format.TV, "The Apothecary Diaries", 2023, 10)
+        val ona1 = mediaNode(170508, Media.Small.Type.ANIME, Media.Format.ONA, "Maomao no Hitorigoto", 2023, 10)
+        val usj = mediaNode(206349, Media.Small.Type.ANIME, Media.Format.SPECIAL, "Maomao no Hitorigoto: USJ wo Chousa Seyo!", 2025, 7)
+
+        val graph = mapOf(
+            161645 to FranchiseNode(
+                tv1,
+                edges = listOf(Media.Relation.SIDE_STORY to ona1),
+            ),
+            170508 to FranchiseNode(
+                ona1,
+                relationType = Media.Relation.SIDE_STORY,
+                edges = listOf(Media.Relation.OTHER to usj),
+            ),
+        )
+
+        val organized = FranchiseOrganizer.organize(rootMedia = tv1, nodesById = graph, mangaNewestFirst = false)
+        assertEquals(listOf(161645), organized.mainSeasonsAndMovies.map { it.media.id })
+        assertEquals(listOf(170508, 206349), organized.ovasAndSpecials.map { it.media.id })
+    }
+
+    @Test
+    fun `extracts sequence numbers across Arabic, Roman, and Season formats`() {
+        assertEquals(2, FranchiseTitleMatcher.extractSequenceNumber("Cyberpunk: Edgerunners 2"))
+        assertEquals(2, FranchiseTitleMatcher.extractSequenceNumber("The Apothecary Diaries Season 2"))
+        assertEquals(3, FranchiseTitleMatcher.extractSequenceNumber("Maomao no Hitorigoto 3rd Season"))
+        assertEquals(4, FranchiseTitleMatcher.extractSequenceNumber("Overlord IV"))
+        assertEquals(2, FranchiseTitleMatcher.extractSequenceNumber("Mob Psycho 100 II"))
+        assertEquals(null, FranchiseTitleMatcher.extractSequenceNumber("86"))
+        assertTrue(
+            FranchiseTitleMatcher.areRelated(
+                mediaNode(1, Media.Small.Type.ANIME, Media.Format.ONA, "Cyberpunk: Edgerunners", 2022),
+                mediaNode(2, Media.Small.Type.ANIME, Media.Format.ONA, "Cyberpunk: Edgerunners 2", 2026),
+            )
+        )
+        assertFalse(
+            FranchiseTitleMatcher.areRelated(
+                mediaNode(1, Media.Small.Type.ANIME, Media.Format.TV, "The Apothecary Diaries", 2023),
+                mediaNode(2, Media.Small.Type.ANIME, Media.Format.TV, "Chainsaw Man", 2022),
+            )
+        )
+    }
 }
