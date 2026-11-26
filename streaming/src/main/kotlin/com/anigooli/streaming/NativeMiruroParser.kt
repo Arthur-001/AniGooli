@@ -96,12 +96,16 @@ object NativeMiruroParser {
             val nat = matchStringProp(titleSlice, "native")
             val display = eng.ifEmpty { rom.ifEmpty { nat } }
             if (display.isEmpty()) continue
-            val cover = matchStringProp(item, "extraLarge")
+            val cover = matchStringProp(item, "cover_url")
+                .ifEmpty { matchStringProp(item, "extraLarge") }
                 .ifEmpty { matchStringProp(item, "large") }
                 .ifEmpty { matchStringProp(item, "poster") }
                 .ifEmpty { matchStringProp(item, "image") }
                 .ifEmpty { matchStringProp(item, "cover") }
                 .takeIf { it.startsWith("http") }
+            val format = matchStringProp(item, "format").ifEmpty { null }
+            val epCount = matchIntProp(item, "episode_count")
+            val seasonYear = matchIntProp(item, "season_year")
             results.add(
                 ProviderAnime(
                     providerId = providerId,
@@ -111,6 +115,9 @@ object NativeMiruroParser {
                     englishTitle = eng.ifEmpty { null },
                     romajiTitle = rom.ifEmpty { null },
                     coverImage = cover,
+                    format = format,
+                    episodeCount = epCount,
+                    seasonYear = seasonYear,
                 )
             )
         }
@@ -283,6 +290,11 @@ object NativeMiruroParser {
     private fun matchStringProp(block: String, key: String): String {
         val re = Regex("""(?:^|[,{\s;])"?($key)"?\s*:\s*"([^"]*)"""")
         return re.find(block)?.groupValues?.getOrNull(2).orEmpty()
+    }
+
+    private fun matchIntProp(block: String, key: String): Int? {
+        val re = Regex("""(?:^|[,{\s;])"?($key)"?\s*:\s*(\d+)""")
+        return re.find(block)?.groupValues?.getOrNull(2)?.toIntOrNull()
     }
 
     private fun matchArrayFirstString(block: String, key: String): String {

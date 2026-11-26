@@ -186,10 +186,11 @@ class ProviderSearchHelper @Inject constructor(
                     coverImage = jikanMatch?.coverImageUrl ?: provider.coverImage,
                     title = displayTitle,
                     season = null,
-                    seasonYear = jikanMatch?.year,
+                    seasonYear = jikanMatch?.year ?: provider.seasonYear,
                     studios = genrePreview,
-                    format = jikanMatch?.type?.let { Media.Format.safeValueOf(it.uppercase()) },
-                    episodes = jikanMatch?.episodes,
+                    format = (jikanMatch?.type ?: provider.format)
+                        ?.let { Media.Format.safeValueOf(it.uppercase()) },
+                    episodes = jikanMatch?.episodes ?: provider.episodeCount,
                 )
             )
         }

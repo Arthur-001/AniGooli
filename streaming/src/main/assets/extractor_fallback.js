@@ -148,11 +148,15 @@
             if (!title) continue;
             var anilistId = anilistStr ? parseInt(anilistStr, 10) : null;
             var malId = malStr ? parseInt(malStr, 10) : null;
-            var cover = matchStringProp(item, "extraLarge") ||
+            var cover = matchStringProp(item, "cover_url") ||
+                matchStringProp(item, "extraLarge") ||
                 matchStringProp(item, "large") ||
                 matchStringProp(item, "poster") ||
                 matchStringProp(item, "image") ||
                 matchStringProp(item, "cover");
+            var fmt = matchStringProp(item, "format") || null;
+            var epM = /(?:^|[,\{\s;])"?episode_count"?\s*:\s*(\d+)/.exec(item);
+            var yrM = /(?:^|[,\{\s;])"?season_year"?\s*:\s*(\d+)/.exec(item);
             seen[providerId] = true;
             results.push({
                 providerId: providerId,
@@ -161,7 +165,10 @@
                 title: title,
                 englishTitle: engTitle || null,
                 romajiTitle: romTitle || null,
-                coverImage: (cover && /^https?:\/\//i.test(cover)) ? cover : null
+                coverImage: (cover && /^https?:\/\//i.test(cover)) ? cover : null,
+                format: fmt,
+                episodeCount: epM ? parseInt(epM[1], 10) : null,
+                seasonYear: yrM ? parseInt(yrM[1], 10) : null
             });
         }
         return results;

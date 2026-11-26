@@ -112,6 +112,12 @@ data class ProviderAnime(
     val romajiTitle: String? = null,
     /** Optional cover image URL extracted from provider search results. */
     val coverImage: String? = null,
+    /** Optional media format string (e.g. "TV", "OVA") from provider search results. */
+    val format: String? = null,
+    /** Optional episode count from provider search results. */
+    val episodeCount: Int? = null,
+    /** Optional release year from provider search results. */
+    val seasonYear: Int? = null,
 )
 
 /** A concrete playable/downloadable video source for a single resolution. */

@@ -252,7 +252,7 @@ class ExploreViewModel @Inject constructor(
                 includedStatuses = filterSheetOptions.status.included.map { MediaStatus.valueOf(it) }.ifEmpty { null },
                 excludedStatuses = filterSheetOptions.status.excluded.map { MediaStatus.valueOf(it) }.ifEmpty { null },
                 isAdult = filterSheetOptions.isAdult,
-                isNsfwEnabled = prefs.isNsfwEnabled,
+                isNsfwEnabled = prefs.isNsfwEnabled || !searchQuery.isNullOrBlank(),
                 language = prefs.language,
                 perPage = prefs.listSize,
             )

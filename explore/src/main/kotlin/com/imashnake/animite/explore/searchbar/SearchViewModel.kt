@@ -96,7 +96,7 @@ class SearchViewModel @Inject constructor(
                                 searchRepository.fetchSearch(
                                     type = mediaType,
                                     search = trimmed,
-                                    isNsfwEnabled = prefs.isNsfwEnabled,
+                                    isNsfwEnabled = true,
                                     language = prefs.language,
                                     perPage = prefs.listSize,
                                 ).firstOrNull()?.getOrNull()
