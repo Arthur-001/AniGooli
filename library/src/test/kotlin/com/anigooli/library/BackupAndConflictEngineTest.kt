@@ -158,7 +158,7 @@ class BackupAndConflictEngineTest {
         val plan = BackupEngine.prepareRestorePlan(parsed, local, emptyList())
         assertEquals(1, plan.animeConflicts.size)
         assertEquals("Attack on Titan", plan.animeConflicts[0].incoming.titleEnglish)
-        assertEquals(2, plan.newAnimes.size)
+        assertEquals(1, plan.newAnimes.size)
         assertEquals("Jujutsu Kaisen", plan.newAnimes[0].titleEnglish)
     }
 }
