@@ -209,6 +209,7 @@ class PlayerViewModel @Inject constructor(
         val bundle = payload.streamBundle
         val activeSource = bundle?.selectedSource
         val sources = bundle?.sources.orEmpty()
+        val actualAudio = bundle?.actualAudioTrack ?: resolvedAudio
 
         _uiState.value = PlayerUiState(
             anilistId = payload.anilistId,
@@ -222,15 +223,16 @@ class PlayerViewModel @Inject constructor(
             localSubtitlePath = payload.localSubtitlePath,
             sources = sources,
             selectedSource = activeSource,
-            audioTrack = bundle?.actualAudioTrack ?: resolvedAudio,
+            audioTrack = actualAudio,
             subtitlesEnabled = resolvedSubs,
             isDubFallback = bundle?.isDubFallback == true,
             targetSeekPositionMs = resumePos,
+            preBufferState = preBufferManager.state.value,
             subtitleStyle = _uiState.value.subtitleStyle,
         )
 
         if (!payload.isLocalFile && activeSource != null && payload.anilistId != null) {
-            startPreBufferFor(payload.anilistId, payload.episode, activeSource, resolvedAudio)
+            startPreBufferFor(payload.anilistId, payload.episode, activeSource, actualAudio)
         }
         loadSubtitlesForCurrentSource()
         if (payload.anilistId != null) {

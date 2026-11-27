@@ -136,6 +136,14 @@ data class PreBufferSlotMeta(
     val mp4TotalBytes: Long = 0L,
     /** True when every segment or entire MP4 has been pre-buffered. */
     val isComplete: Boolean = false,
+    /** Optional quality label for offline stream reconstruction. */
+    val qualityLabel: String = "",
+    /** Optional server name for offline stream reconstruction. */
+    val serverName: String = "",
+    /** Optional HTTP Referer header for stream requests. */
+    val referer: String = "",
+    /** Optional HTTP Origin header for stream requests. */
+    val origin: String = "",
 )
 
 /** Result returned when exporting pre-buffered segments/bytes to a permanent download directory. */
@@ -223,6 +231,31 @@ class PreBufferSlotStore(
     /** Returns the segment file path inside [slotKey] for [segmentUrl]. */
     fun segmentFile(slotKey: String, segmentUrl: String): File =
         File(slotDir(slotKey), "seg_${PreBufferPolicy.urlHash(segmentUrl)}.bin")
+
+    /** Returns the cached HLS playlist file path inside [slotKey] for [playlistUrl]. */
+    fun playlistFile(slotKey: String, playlistUrl: String): File =
+        File(slotDir(slotKey), "pl_${PreBufferPolicy.urlHash(playlistUrl)}.m3u8")
+
+    /** Finds any cached slot on disk for [anilistId] and [episode] with reusable buffered data. */
+    fun findCachedSlot(anilistId: Int, episode: String): Pair<String, PreBufferSlotMeta>? {
+        if (!rootDir.exists()) return null
+        val safeEp = episode.replace(Regex("""[^a-zA-Z0-9._-]"""), "_")
+        val prefix = "${anilistId}_${safeEp}_"
+        val dirs = rootDir.listFiles()
+            ?.filter { it.isDirectory && it.name.startsWith(prefix) }
+            ?.sortedByDescending { it.lastModified() }
+            .orEmpty()
+        for (dir in dirs) {
+            val meta = readMeta(dir.name) ?: continue
+            val hasData = if (meta.isHls) {
+                meta.completedSegmentUrls.isNotEmpty()
+            } else {
+                meta.mp4BytesBuffered > 0L && mp4PartialFile(dir.name).exists()
+            }
+            if (hasData) return dir.name to meta
+        }
+        return null
+    }
 
     /** Returns the MP4 partial file path inside [slotKey]. */
     fun mp4PartialFile(slotKey: String): File = File(slotDir(slotKey), "mp4_partial.bin")
@@ -318,6 +351,22 @@ class PreBufferManager @Inject constructor(
     /** Returns current pre-buffer cache usage on disk in bytes. */
     fun getCacheSizeBytes(): Long = store.totalSizeBytes()
 
+    /**
+     * Returns a cached [StreamSource] for [anilistId] + [episode] if any pre-buffered segments
+     * or MP4 bytes exist on disk, enabling offline playback of the pre-buffered portion.
+     */
+    fun findCachedSourceForEpisode(anilistId: Int, episode: String): StreamSource? {
+        val (_, meta) = store.findCachedSlot(anilistId, episode) ?: return null
+        return StreamSource(
+            url = meta.streamUrl,
+            qualityLabel = meta.qualityLabel.ifBlank { "Cached" },
+            serverName = meta.serverName.ifBlank { "Pre-buffered" },
+            isHls = meta.isHls,
+            referer = meta.referer,
+            origin = meta.origin,
+        )
+    }
+
     /** Cancels active pre-buffering and wipes all pre-buffer cache files immediately. */
     fun clearCache() {
         scope.launch {
@@ -354,7 +403,10 @@ class PreBufferManager @Inject constructor(
                 }.getOrDefault(configuredMb.toLong() * BYTES_PER_MB)
                 val capBytes = PreBufferPolicy.computeEffectiveCapBytes(configuredMb, availableBytes)
 
-                val existingMeta = store.readMeta(slotKey)?.takeIf { it.streamUrl == source.url }
+                val existingMeta = store.readMeta(slotKey)?.takeIf {
+                    it.streamUrl == source.url ||
+                        it.streamUrl.substringBefore('?') == source.url.substringBefore('?')
+                }
                 val initialBuffered = store.slotSizeBytes(slotKey)
                 val initialFraction = when {
                     existingMeta?.isComplete == true -> 1f
@@ -429,12 +481,20 @@ class PreBufferManager @Inject constructor(
 
     private suspend fun prefetchHls(slotKey: String, source: StreamSource, capBytes: Long) {
         if (capBytes <= 0L) return
-        val playlistText = fetchString(source.url, source.referer, source.origin) ?: return
+        val masterPlFile = store.playlistFile(slotKey, source.url)
+        val playlistText = fetchString(source.url, source.referer, source.origin)
+            ?.also { runCatching { masterPlFile.writeText(it, Charsets.UTF_8) } }
+            ?: runCatching { masterPlFile.takeIf { it.exists() }?.readText(Charsets.UTF_8) }.getOrNull()
+            ?: return
         var parsed = HlsPlaylistParser.parseMediaPlaylist(playlistText, source.url)
         var resolvedPlaylistUrl = source.url
         if (parsed.isMasterPlaylist && parsed.segmentUrls.isNotEmpty()) {
             resolvedPlaylistUrl = parsed.segmentUrls.first()
-            val subText = fetchString(resolvedPlaylistUrl, source.referer, source.origin) ?: return
+            val subPlFile = store.playlistFile(slotKey, resolvedPlaylistUrl)
+            val subText = fetchString(resolvedPlaylistUrl, source.referer, source.origin)
+                ?.also { runCatching { subPlFile.writeText(it, Charsets.UTF_8) } }
+                ?: runCatching { subPlFile.takeIf { it.exists() }?.readText(Charsets.UTF_8) }.getOrNull()
+                ?: return
             parsed = HlsPlaylistParser.parseMediaPlaylist(subText, resolvedPlaylistUrl)
         }
 
@@ -445,7 +505,11 @@ class PreBufferManager @Inject constructor(
         if (allSegments.isEmpty()) return
 
         val existing = store.readMeta(slotKey)
-        val completed = if (existing?.streamUrl == source.url) {
+        val sameStream = existing != null && (
+            existing.streamUrl == source.url ||
+                existing.streamUrl.substringBefore('?') == source.url.substringBefore('?')
+            )
+        val completed = if (sameStream && existing != null) {
             existing.completedSegmentUrls.toMutableSet()
         } else {
             mutableSetOf()
@@ -466,6 +530,10 @@ class PreBufferManager @Inject constructor(
                 initSegmentUrl = parsed.initSegmentUrl,
                 completedSegmentUrls = completed,
                 isComplete = initialDone,
+                qualityLabel = source.qualityLabel,
+                serverName = source.serverName,
+                referer = source.referer,
+                origin = source.origin,
             )
         )
         _state.value = PreBufferState(
@@ -497,6 +565,10 @@ class PreBufferManager @Inject constructor(
                         initSegmentUrl = parsed.initSegmentUrl,
                         completedSegmentUrls = completed.toSet(),
                         isComplete = isDone,
+                        qualityLabel = source.qualityLabel,
+                        serverName = source.serverName,
+                        referer = source.referer,
+                        origin = source.origin,
                     )
                 )
                 val fraction = (completed.size.toFloat() / allSegments.size).coerceIn(0f, 1f)
@@ -710,6 +782,14 @@ private class PreBufferDataSource(
         val url = dataSpec.uri.toString()
         val slotKey = activeSlotProvider()
         if (slotKey != null) {
+            val playlistFile = store.playlistFile(slotKey, url)
+            if (playlistFile.exists() && playlistFile.length() > 0L && dataSpec.position < playlistFile.length()) {
+                val fs = FileDataSource().also { f -> transferListeners.forEach(f::addTransferListener) }
+                val localSpec = dataSpec.buildUpon().setUri(Uri.fromFile(playlistFile)).build()
+                fileDelegate = fs
+                activeDelegate = fs
+                return fs.open(localSpec)
+            }
             val segFile = store.segmentFile(slotKey, url)
             if (segFile.exists() && segFile.length() > 0L && dataSpec.position < segFile.length()) {
                 val fs = FileDataSource().also { f -> transferListeners.forEach(f::addTransferListener) }

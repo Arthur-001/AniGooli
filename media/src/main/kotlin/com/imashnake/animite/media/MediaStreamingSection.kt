@@ -263,7 +263,7 @@ internal fun MediaStreamingSection(
                         val dlStatus = dl?.let { runCatching { DownloadStatus.valueOf(it.status) }.getOrNull() }
                         val isBusy = streamingState.busyEpisode == ep
                         val isLastWatched = ep == lastWatchedEpisode
-                        val isWatched = ep in watchedEpisodes || isLastWatched
+                        val isWatched = ep in watchedEpisodes
                         val epName = streamingState.episodeTitles[ep]
 
                         Surface(
@@ -323,7 +323,7 @@ internal fun MediaStreamingSection(
                         val dlStatus = dl?.let { runCatching { DownloadStatus.valueOf(it.status) }.getOrNull() }
                         val isBusy = streamingState.busyEpisode == ep
                         val isLastWatched = ep == lastWatchedEpisode
-                        val isWatched = ep in watchedEpisodes || isLastWatched
+                        val isWatched = ep in watchedEpisodes
                         val containerColor = when {
                             isLastWatched -> MaterialTheme.colorScheme.primaryContainer
                             isWatched -> MaterialTheme.colorScheme.secondaryContainer
@@ -499,7 +499,7 @@ internal fun MediaStreamingSection(
                     }
                 }
 
-                val isEpWatched = ep in watchedEpisodes || ep == lastWatchedEpisode
+                val isEpWatched = ep in watchedEpisodes
                 OutlinedButton(
                     onClick = { onToggleEpisodeWatched(ep) },
                     modifier = Modifier.fillMaxWidth(),

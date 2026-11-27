@@ -9,11 +9,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
 import com.anigooli.downloads.DownloadEpisodeEntity
 import com.anigooli.downloads.DownloadRepository
+import com.anigooli.downloads.PreBufferManager
 import com.anigooli.library.AnimeTitleNormalizer
 import com.anigooli.library.LibraryRepository
 import com.anigooli.streaming.AudioTrack
 import com.anigooli.streaming.CensorshipVersion
 import com.anigooli.streaming.EpisodePlayerNavigator
+import com.anigooli.streaming.EpisodeStreamBundle
 import com.anigooli.streaming.JikanAnimeInfo
 import com.anigooli.streaming.JikanMetadataClient
 import com.anigooli.streaming.QualitySelector
@@ -95,6 +97,7 @@ class MediaPageViewModel @Inject constructor(
     private val streamingRepository: StreamingRepository,
     private val jikanMetadataClient: JikanMetadataClient,
     private val downloadRepository: DownloadRepository,
+    private val preBufferManager: PreBufferManager,
     private val libraryRepository: LibraryRepository,
     private val playerNavigator: EpisodePlayerNavigator,
     private val preferencesRepository: PreferencesRepository,
@@ -514,8 +517,28 @@ class MediaPageViewModel @Inject constructor(
                     bundle = bundle,
                 )
             }.onFailure { err ->
-                _streamingState.update {
-                    it.copy(busyEpisode = null, errorMessage = err.message ?: "Unable to resolve episode $episode")
+                val cachedSource = preBufferManager.findCachedSourceForEpisode(currentMedia.id, episode)
+                if (cachedSource != null && !forceMpv) {
+                    _streamingState.update { it.copy(busyEpisode = null, statusMessage = "Playing pre-buffered cache offline") }
+                    playerNavigator.openOnlineStream(
+                        anilistId = currentMedia.id,
+                        animeTitle = currentMedia.title ?: "Anime",
+                        coverUrl = currentMedia.coverImage,
+                        providerId = providerId,
+                        episode = episode,
+                        allEpisodes = allEps,
+                        bundle = EpisodeStreamBundle(
+                            episode = episode,
+                            actualAudioTrack = audioTrack.value,
+                            isDubFallback = false,
+                            sources = listOf(cachedSource),
+                            selectedSource = cachedSource,
+                        ),
+                    )
+                } else {
+                    _streamingState.update {
+                        it.copy(busyEpisode = null, errorMessage = err.message ?: "Unable to resolve episode $episode")
+                    }
                 }
             }
         }

@@ -21,10 +21,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -566,10 +567,18 @@ private fun PlayerScreen(
                                     )
                                 }
                                 .pointerInput(Unit) {
-                                    detectTransformGestures { _, _, zoom, _ ->
-                                        if (zoom != 1f) {
-                                            pinchScale = (pinchScale * zoom).coerceIn(MIN_PINCH_ZOOM, MAX_PINCH_ZOOM)
-                                        }
+                                    awaitEachGesture {
+                                        do {
+                                            val event = awaitPointerEvent()
+                                            val pressedCount = event.changes.count { it.pressed }
+                                            if (pressedCount >= 2) {
+                                                val zoom = event.calculateZoom()
+                                                if (zoom != 1f) {
+                                                    pinchScale = (pinchScale * zoom).coerceIn(MIN_PINCH_ZOOM, MAX_PINCH_ZOOM)
+                                                    event.changes.forEach { it.consume() }
+                                                }
+                                            }
+                                        } while (event.changes.any { it.pressed })
                                     }
                                 }
                         } else Modifier
@@ -1067,9 +1076,6 @@ private fun VideoSeekBar(
         (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
     val displayFraction = if (isDragging) dragFraction else currentFraction
-    val exoBufFraction = if (durationMs > 0L) {
-        (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-    } else 0f
     val preBufEnd = if (showPreBuffer) preBufferFraction.coerceIn(0f, 1f) else 0f
 
     Canvas(
@@ -1118,22 +1124,12 @@ private fun VideoSeekBar(
             cornerRadius = radius,
         )
 
-        // Pre-buffered sections (light gray): disk pre-buffer + ExoPlayer RAM buffer ahead
+        // Pre-buffered section (light gray)
         if (preBufEnd > 0f) {
             drawRoundRect(
                 color = preBufferColor,
                 topLeft = Offset(0f, trackTop),
                 size = Size(width * preBufEnd, trackHeight),
-                cornerRadius = radius,
-            )
-        }
-        if (exoBufFraction > currentFraction) {
-            val startX = width * currentFraction
-            val bufWidth = (width * (exoBufFraction - currentFraction)).coerceAtLeast(0f)
-            drawRoundRect(
-                color = preBufferColor,
-                topLeft = Offset(startX, trackTop),
-                size = Size(bufWidth, trackHeight),
                 cornerRadius = radius,
             )
         }
