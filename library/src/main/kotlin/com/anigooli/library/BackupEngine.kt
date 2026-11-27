@@ -276,37 +276,60 @@ object BackupEngine {
         val existingByAnilistId = existingAnimes
             .mapNotNull { awg -> awg.anime.anilistId?.let { id -> id to awg } }
             .toMap()
-        val existingByNormTitle = existingAnimes
-            .flatMap { awg ->
-                listOfNotNull(
-                    awg.anime.titleEnglish,
-                    awg.anime.titleRomaji,
-                    awg.anime.titleNative,
-                ).map { normalizeTitle(it) to awg }
-            }.toMap()
+        val existingByNormTitle = LinkedHashMap<String, AnimeWithGenres>()
+        for (awg in existingAnimes) {
+            for (title in listOfNotNull(awg.anime.titleEnglish, awg.anime.titleRomaji, awg.anime.titleNative)) {
+                val canonical = AnimeTitleNormalizer.canonicalKey(title)
+                if (canonical.isNotEmpty()) existingByNormTitle.putIfAbsent(canonical, awg)
+                val normalized = normalizeTitle(title)
+                if (normalized.isNotEmpty()) existingByNormTitle.putIfAbsent(normalized, awg)
+            }
+        }
 
         val newAnimes = ArrayList<BackupAnimeEntry>()
         val animeConflicts = ArrayList<AnimeConflict>()
+        val seenNewAnilistIds = HashSet<Int>()
+        val seenNewTitleKeys = HashSet<String>()
+        val seenConflictLocalIds = HashSet<String>()
 
-        parsed.validAnimes.forEachIndexed { idx, incoming ->
-            val matchedById = incoming.anilistId?.let { existingByAnilistId[it] }
-            val matchedByTitle = listOfNotNull(
+        parsed.validAnimes.forEachIndexed { idx, rawIncoming ->
+            val incoming = rawIncoming.copy(
+                titleEnglish = AnimeTitleNormalizer.displayWholeTitle(rawIncoming.titleEnglish),
+                titleRomaji = AnimeTitleNormalizer.displayWholeTitle(rawIncoming.titleRomaji),
+            )
+            val incomingTitles = listOfNotNull(
+                rawIncoming.titleEnglish,
+                rawIncoming.titleRomaji,
+                rawIncoming.titleNative,
                 incoming.titleEnglish,
                 incoming.titleRomaji,
-                incoming.titleNative,
-            ).firstNotNullOfOrNull { t -> existingByNormTitle[normalizeTitle(t)] }
+            )
+            val matchedById = incoming.anilistId?.let { existingByAnilistId[it] }
+            val matchedByTitle = incomingTitles.firstNotNullOfOrNull { t ->
+                val canonical = AnimeTitleNormalizer.canonicalKey(t)
+                existingByNormTitle[canonical] ?: existingByNormTitle[normalizeTitle(t)]
+            }
 
             val matched = matchedById ?: matchedByTitle
             if (matched != null) {
-                animeConflicts.add(
-                    AnimeConflict(
-                        conflictId = "anime_${idx}_${matched.anime.localId}",
-                        existing = matched,
-                        incoming = incoming,
+                if (seenConflictLocalIds.add(matched.anime.localId)) {
+                    animeConflicts.add(
+                        AnimeConflict(
+                            conflictId = "anime_${idx}_${matched.anime.localId}",
+                            existing = matched,
+                            incoming = incoming,
+                        )
                     )
-                )
+                }
             } else {
-                newAnimes.add(incoming)
+                val incomingKeys = incomingTitles.map { AnimeTitleNormalizer.canonicalKey(it) }.filter { it.isNotEmpty() }
+                val dupId = incoming.anilistId != null && incoming.anilistId in seenNewAnilistIds
+                val dupTitle = incomingKeys.any { it in seenNewTitleKeys }
+                if (!dupId && !dupTitle) {
+                    incoming.anilistId?.let { seenNewAnilistIds.add(it) }
+                    seenNewTitleKeys.addAll(incomingKeys)
+                    newAnimes.add(incoming)
+                }
             }
         }
 

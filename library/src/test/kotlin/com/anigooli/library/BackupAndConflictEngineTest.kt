@@ -138,4 +138,27 @@ class BackupAndConflictEngineTest {
         assertEquals(OfflineWatchStatus.COMPLETED.name, parsed.validAnimes[0].status)
         assertEquals(1, parsed.quarantinedItems.size)
     }
+
+    @Test
+    fun `prepareRestorePlan deduplicates seasons against local and within incoming import`() {
+        val local = sampleLocalAnime()
+        val parsed = ParsedImportResult(
+            validAnimes = listOf(
+                BackupAnimeEntry(titleEnglish = "Attack on Titan Season 2", anilistId = 20958),
+                BackupAnimeEntry(titleEnglish = "Jujutsu Kaisen", anilistId = 113415),
+                BackupAnimeEntry(titleEnglish = "Jujutsu Kaisen Season 2", anilistId = 145064),
+                BackupAnimeEntry(titleEnglish = "Jujutsu Kaisen 0: The Movie", anilistId = 131573),
+            ),
+            validCustomGenres = emptyList(),
+            preferences = null,
+            isChecksumMismatch = false,
+            quarantinedItems = emptyList(),
+        )
+
+        val plan = BackupEngine.prepareRestorePlan(parsed, local, emptyList())
+        assertEquals(1, plan.animeConflicts.size)
+        assertEquals("Attack on Titan", plan.animeConflicts[0].incoming.titleEnglish)
+        assertEquals(2, plan.newAnimes.size)
+        assertEquals("Jujutsu Kaisen", plan.newAnimes[0].titleEnglish)
+    }
 }

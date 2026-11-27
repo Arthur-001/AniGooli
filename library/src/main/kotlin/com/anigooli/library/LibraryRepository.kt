@@ -547,9 +547,9 @@ class LibraryRepository @Inject constructor(
     ): OfflineAnimeEntity = OfflineAnimeEntity(
         localId = localId,
         anilistId = anilistId,
-        titleEnglish = titleEnglish,
-        titleRomaji = titleRomaji,
-        titleNative = titleNative,
+        titleEnglish = AnimeTitleNormalizer.displayWholeTitle(titleEnglish),
+        titleRomaji = AnimeTitleNormalizer.displayWholeTitle(titleRomaji),
+        titleNative = titleNative?.trim()?.takeIf { it.isNotEmpty() },
         coverUrl = coverUrl,
         localCoverPath = null,
         status = OfflineWatchStatus.safeParse(status).name,
