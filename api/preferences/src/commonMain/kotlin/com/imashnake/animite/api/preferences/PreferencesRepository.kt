@@ -401,6 +401,14 @@ class PreferencesRepository internal constructor(
         dataStore.setValue(showEpisodeNamesKey, show)
     }
 
+    private val autoAddWatchedToMyListKey = booleanPreferencesKey("auto_add_watched_to_my_list")
+    /** Whether watching >= 65% of an episode automatically adds the anime to My List (default: true). */
+    val autoAddWatchedToMyList = dataStore.getValue(autoAddWatchedToMyListKey, true)
+    /** Persists whether watched anime are automatically added to My List. */
+    suspend fun setAutoAddWatchedToMyList(enabled: Boolean) {
+        dataStore.setValue(autoAddWatchedToMyListKey, enabled)
+    }
+
     private val defaultCensorshipVersionKey = stringPreferencesKey("default_censorship_version")
     /** Global default anime version preference (Uncensored vs Censored). */
     val defaultCensorshipVersion = dataStore.getValue(defaultCensorshipVersionKey, CENSORSHIP_UNCENSORED)

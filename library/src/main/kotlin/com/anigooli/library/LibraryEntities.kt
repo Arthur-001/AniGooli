@@ -241,7 +241,7 @@ data class WatchedEpisodeEntity(
     val activeWatchMs: Long = 0L,
     /** Known total video duration in milliseconds. */
     val durationMs: Long = 0L,
-    /** True once [activeWatchMs] reaches 80% of [durationMs] or the user manually marks it watched. */
+    /** True once [activeWatchMs] reaches 65% of [durationMs] or the user manually marks it watched. */
     val isWatched: Boolean = false,
     /** Epoch millis when this episode record was last updated. */
     val watchedAt: Long,

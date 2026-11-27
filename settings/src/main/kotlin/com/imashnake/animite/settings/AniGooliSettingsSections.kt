@@ -75,6 +75,7 @@ internal fun AniGooliSettingsSections(
     val streamQuality by viewModel.defaultStreamQuality.collectAsState(initial = DEFAULT_STREAM_QUALITY)
     val defaultAudio by viewModel.defaultAudioTrack.collectAsState(initial = AUDIO_TRACK_JAPANESE)
     val defaultSubs by viewModel.defaultSubtitlesEnabled.collectAsState(initial = true)
+    val autoAddWatchedToMyList by viewModel.autoAddWatchedToMyList.collectAsState(initial = true)
     val preferredPlayer by viewModel.preferredPlayer.collectAsState(initial = PLAYER_IN_APP)
     val preBufferMaxMb by viewModel.preBufferMaxMb.collectAsState(initial = DEFAULT_PRE_BUFFER_MB)
     val preBufferCacheBytes by viewModel.preBufferCacheBytes.collectAsState(initial = 0L)
@@ -156,6 +157,24 @@ internal fun AniGooliSettingsSections(
                 ) {
                     Text("English Subtitles ON by default", style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = defaultSubs, onCheckedChange = viewModel::setDefaultSubtitlesEnabled)
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Auto-add watched anime to My List", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Adds anime to My List after watching 65% of an episode",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = autoAddWatchedToMyList,
+                        onCheckedChange = viewModel::setAutoAddWatchedToMyList,
+                    )
                 }
 
                 Text(

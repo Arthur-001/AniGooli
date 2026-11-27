@@ -368,6 +368,8 @@ class PlayerViewModel @Inject constructor(
                     episodeNumber = current.episode,
                     activeDeltaMs = activeWatchDeltaMs,
                     durationMs = durationMs,
+                    animeTitle = current.animeTitle,
+                    coverUrl = current.coverUrl,
                 )
             }
         }

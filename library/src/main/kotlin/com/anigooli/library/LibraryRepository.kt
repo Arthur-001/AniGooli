@@ -489,13 +489,16 @@ class LibraryRepository @Inject constructor(
 
     /**
      * Accumulates [activeDeltaMs] of real active playback time for [episodeNumber] and marks it watched
-     * only once accumulated active watch time reaches at least 80% of [durationMs].
+     * only once accumulated active watch time reaches at least 65% of [durationMs].
+     * When the 65% threshold is reached and the global setting is enabled, also adds the anime to My List.
      */
     suspend fun recordActiveWatchProgress(
         anilistId: Int,
         episodeNumber: String,
         activeDeltaMs: Long,
         durationMs: Long,
+        animeTitle: String? = null,
+        coverUrl: String? = null,
     ) = withContext(Dispatchers.IO) {
         if (activeDeltaMs <= 0L && durationMs <= 0L) return@withContext
         val existing = dao.getWatchedEpisodeRecord(anilistId, episodeNumber)
@@ -515,6 +518,21 @@ class LibraryRepository @Inject constructor(
         )
         if (newIsWatched) {
             watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() + episodeNumber
+        }
+        if (reachedThreshold && !animeTitle.isNullOrBlank()) {
+            val autoAdd = preferencesRepository.autoAddWatchedToMyList.firstOrNull() ?: true
+            if (autoAdd) {
+                addOrUpdateFromAnilist(
+                    anilistId = anilistId,
+                    titleEnglish = animeTitle,
+                    titleRomaji = null,
+                    titleNative = null,
+                    coverUrl = coverUrl,
+                    totalEpisodes = null,
+                    genreNames = emptyList(),
+                    status = OfflineWatchStatus.WATCHING,
+                )
+            }
         }
     }
 
@@ -542,9 +560,9 @@ class LibraryRepository @Inject constructor(
 
     companion object {
         /** Fraction of total episode duration that must be actively watched to auto-mark watched. */
-        const val WATCHED_THRESHOLD_FRACTION = 0.80
+        const val WATCHED_THRESHOLD_FRACTION = 0.65
 
-        /** Returns true when [activeWatchMs] is at least 80% of a valid [durationMs]. */
+        /** Returns true when [activeWatchMs] is at least 65% of a valid [durationMs]. */
         fun hasReachedWatchedThreshold(activeWatchMs: Long, durationMs: Long): Boolean =
             durationMs > 0L && activeWatchMs >= (durationMs * WATCHED_THRESHOLD_FRACTION).toLong()
     }

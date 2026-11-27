@@ -90,6 +90,7 @@ class SettingsViewModel @Inject constructor(
     val defaultStreamQuality = preferencesRepository.defaultStreamQuality.map { it ?: DEFAULT_STREAM_QUALITY }
     val defaultAudioTrack = preferencesRepository.defaultAudioTrack.map { it ?: AUDIO_TRACK_JAPANESE }
     val defaultSubtitlesEnabled = preferencesRepository.defaultSubtitlesEnabled.map { it ?: true }
+    val autoAddWatchedToMyList = preferencesRepository.autoAddWatchedToMyList.map { it ?: true }
     val preferredPlayer = preferencesRepository.preferredPlayer.map { it ?: PLAYER_IN_APP }
     val preBufferMaxMb = preferencesRepository.preBufferMaxMb.map { it ?: DEFAULT_PRE_BUFFER_MB }
     val extractorAutoUpdateEnabled = preferencesRepository.extractorAutoUpdateEnabled.map { it ?: true }
@@ -222,6 +223,11 @@ class SettingsViewModel @Inject constructor(
 
     fun setDefaultSubtitlesEnabled(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
         preferencesRepository.setDefaultSubtitlesEnabled(enabled)
+    }
+
+    /** Persists whether anime reaching 65% active watch time are automatically added to My List. */
+    fun setAutoAddWatchedToMyList(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        preferencesRepository.setAutoAddWatchedToMyList(enabled)
     }
 
     fun setPreferredPlayer(player: String) = viewModelScope.launch(Dispatchers.IO) {

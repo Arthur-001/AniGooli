@@ -33,12 +33,12 @@ class AnimePlaybackPrefsTest {
     }
 
     @Test
-    fun `watched episode threshold requires at least 80 percent active watch time`() {
+    fun `watched episode threshold requires at least 65 percent active watch time`() {
         val twentyFourMinMs = 24 * 60 * 1_000L
         assertFalse(LibraryRepository.hasReachedWatchedThreshold(0L, twentyFourMinMs))
         assertFalse(LibraryRepository.hasReachedWatchedThreshold(1_000L, twentyFourMinMs))
-        assertFalse(LibraryRepository.hasReachedWatchedThreshold((twentyFourMinMs * 0.79).toLong(), twentyFourMinMs))
-        assertTrue(LibraryRepository.hasReachedWatchedThreshold((twentyFourMinMs * 0.80).toLong(), twentyFourMinMs))
+        assertFalse(LibraryRepository.hasReachedWatchedThreshold((twentyFourMinMs * 0.64).toLong(), twentyFourMinMs))
+        assertTrue(LibraryRepository.hasReachedWatchedThreshold((twentyFourMinMs * 0.65).toLong(), twentyFourMinMs))
         assertTrue(LibraryRepository.hasReachedWatchedThreshold(twentyFourMinMs, twentyFourMinMs))
         assertFalse(LibraryRepository.hasReachedWatchedThreshold(twentyFourMinMs, 0L))
     }
