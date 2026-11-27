@@ -346,8 +346,12 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** Persists resume playback position for the active anime & episode. */
-    fun savePlaybackProgress(positionMs: Long) {
+    /** Persists resume playback position and active watch time for the active anime & episode. */
+    fun savePlaybackProgress(
+        positionMs: Long,
+        durationMs: Long = 0L,
+        activeWatchDeltaMs: Long = 0L,
+    ) {
         val current = _uiState.value
         val anilistId = current.anilistId ?: return
         viewModelScope.launch {
@@ -358,6 +362,14 @@ class PlayerViewModel @Inject constructor(
                 lastEpisode = current.episode,
                 lastPositionMs = positionMs,
             )
+            if (activeWatchDeltaMs > 0L) {
+                libraryRepository.recordActiveWatchProgress(
+                    anilistId = anilistId,
+                    episodeNumber = current.episode,
+                    activeDeltaMs = activeWatchDeltaMs,
+                    durationMs = durationMs,
+                )
+            }
         }
     }
 

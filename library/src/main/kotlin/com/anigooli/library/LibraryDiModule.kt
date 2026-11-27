@@ -36,6 +36,9 @@ object LibraryDiModule {
                 CREATE TABLE IF NOT EXISTS `watched_episodes` (
                     `anilistId` INTEGER NOT NULL,
                     `episodeNumber` TEXT NOT NULL,
+                    `activeWatchMs` INTEGER NOT NULL DEFAULT 0,
+                    `durationMs` INTEGER NOT NULL DEFAULT 0,
+                    `isWatched` INTEGER NOT NULL DEFAULT 0,
                     `watchedAt` INTEGER NOT NULL,
                     PRIMARY KEY(`anilistId`, `episodeNumber`)
                 )

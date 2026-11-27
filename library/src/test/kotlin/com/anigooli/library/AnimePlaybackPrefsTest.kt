@@ -2,6 +2,8 @@ package com.anigooli.library
 
 import com.imashnake.animite.api.anilist.sanitize.media.Media
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AnimePlaybackPrefsTest {
@@ -28,5 +30,16 @@ class AnimePlaybackPrefsTest {
         assertEquals("Demon Slayer", LibraryViewModel.resolveDisplayTitle(anime, Media.Language.ENGLISH))
         assertEquals("鬼滅の刃", LibraryViewModel.resolveDisplayTitle(anime, Media.Language.NATIVE))
         assertEquals("Kimetsu no Yaiba", LibraryViewModel.resolveDisplayTitle(anime, Media.Language.ROMAJI))
+    }
+
+    @Test
+    fun `watched episode threshold requires at least 80 percent active watch time`() {
+        val twentyFourMinMs = 24 * 60 * 1_000L
+        assertFalse(LibraryRepository.hasReachedWatchedThreshold(0L, twentyFourMinMs))
+        assertFalse(LibraryRepository.hasReachedWatchedThreshold(1_000L, twentyFourMinMs))
+        assertFalse(LibraryRepository.hasReachedWatchedThreshold((twentyFourMinMs * 0.79).toLong(), twentyFourMinMs))
+        assertTrue(LibraryRepository.hasReachedWatchedThreshold((twentyFourMinMs * 0.80).toLong(), twentyFourMinMs))
+        assertTrue(LibraryRepository.hasReachedWatchedThreshold(twentyFourMinMs, twentyFourMinMs))
+        assertFalse(LibraryRepository.hasReachedWatchedThreshold(twentyFourMinMs, 0L))
     }
 }

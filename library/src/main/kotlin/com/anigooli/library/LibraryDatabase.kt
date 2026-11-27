@@ -143,15 +143,19 @@ interface LibraryDao {
 
     // region Watched Episodes
 
-    /** Streams all watched episode numbers for [anilistId]. */
-    @Query("SELECT episodeNumber FROM watched_episodes WHERE anilistId = :anilistId")
+    /** Streams all watched episode numbers for [anilistId] (where [WatchedEpisodeEntity.isWatched] is true). */
+    @Query("SELECT episodeNumber FROM watched_episodes WHERE anilistId = :anilistId AND isWatched = 1")
     fun observeWatchedEpisodes(anilistId: Int): Flow<List<String>>
 
     /** Fetches all watched episode numbers for [anilistId] once. */
-    @Query("SELECT episodeNumber FROM watched_episodes WHERE anilistId = :anilistId")
+    @Query("SELECT episodeNumber FROM watched_episodes WHERE anilistId = :anilistId AND isWatched = 1")
     suspend fun getWatchedEpisodesOnce(anilistId: Int): List<String>
 
-    /** Inserts or updates a watched episode marker. */
+    /** Fetches a single episode's watch progress/status record. */
+    @Query("SELECT * FROM watched_episodes WHERE anilistId = :anilistId AND episodeNumber = :episodeNumber LIMIT 1")
+    suspend fun getWatchedEpisodeRecord(anilistId: Int, episodeNumber: String): WatchedEpisodeEntity?
+
+    /** Inserts or updates a watched episode record. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertWatchedEpisode(entry: WatchedEpisodeEntity)
 

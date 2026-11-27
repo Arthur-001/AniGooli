@@ -237,6 +237,12 @@ data class WatchedEpisodeEntity(
     val anilistId: Int,
     /** Episode identifier string (e.g. "1", "12.5"). */
     val episodeNumber: String,
-    /** Epoch millis when this episode was marked watched. */
+    /** Accumulated active playback time in milliseconds (excludes paused/seeked time). */
+    val activeWatchMs: Long = 0L,
+    /** Known total video duration in milliseconds. */
+    val durationMs: Long = 0L,
+    /** True once [activeWatchMs] reaches 80% of [durationMs] or the user manually marks it watched. */
+    val isWatched: Boolean = false,
+    /** Epoch millis when this episode record was last updated. */
     val watchedAt: Long,
 )

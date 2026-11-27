@@ -235,6 +235,7 @@ private fun PlayerScreen(
     var currentPosMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var bufferedPosMs by remember { mutableLongStateOf(0L) }
+    var pendingActiveWatchMs by remember { mutableLongStateOf(0L) }
     var showControls by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
     var pinchScale by remember { mutableFloatStateOf(1f) }
@@ -278,7 +279,12 @@ private fun PlayerScreen(
         }
         exoPlayer.addListener(listener)
         onDispose {
-            viewModel.savePlaybackProgress(exoPlayer.currentPosition)
+            viewModel.savePlaybackProgress(
+                positionMs = exoPlayer.currentPosition,
+                durationMs = exoPlayer.duration.coerceAtLeast(0L),
+                activeWatchDeltaMs = pendingActiveWatchMs,
+            )
+            pendingActiveWatchMs = 0L
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
@@ -341,16 +347,30 @@ private fun PlayerScreen(
         exoPlayer.setPlaybackSpeed(state.playbackSpeed)
     }
 
-    // Poll position and periodically save resume timestamp
+    // Poll position and periodically save resume timestamp & active watch time
     LaunchedEffect(exoPlayer) {
         var tick = 0
+        var lastPollMs = System.currentTimeMillis()
         while (true) {
+            val now = System.currentTimeMillis()
+            val elapsed = (now - lastPollMs).coerceIn(0L, POSITION_POLL_MS * 3)
+            lastPollMs = now
+
             currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
             durationMs = exoPlayer.duration.coerceAtLeast(0L)
             bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
+            if (exoPlayer.isPlaying) {
+                val speed = exoPlayer.playbackParameters.speed.coerceAtLeast(0.25f)
+                pendingActiveWatchMs += (elapsed * speed).toLong()
+            }
             tick++
             if (tick % SAVE_PROGRESS_EVERY_TICKS == 0 && exoPlayer.isPlaying) {
-                viewModel.savePlaybackProgress(currentPosMs)
+                viewModel.savePlaybackProgress(
+                    positionMs = currentPosMs,
+                    durationMs = durationMs,
+                    activeWatchDeltaMs = pendingActiveWatchMs,
+                )
+                pendingActiveWatchMs = 0L
             }
             delay(POSITION_POLL_MS)
         }
@@ -682,11 +702,25 @@ private fun PlayerScreen(
                     },
                     onPrevEpisode = {
                         val idx = state.allEpisodes.indexOf(state.episode)
-                        if (idx > 0) viewModel.navigateEpisode(state.allEpisodes[idx - 1])
+                        if (idx > 0) {
+                            viewModel.savePlaybackProgress(
+                                positionMs = exoPlayer.currentPosition,
+                                durationMs = durationMs,
+                                activeWatchDeltaMs = pendingActiveWatchMs,
+                            )
+                            pendingActiveWatchMs = 0L
+                            viewModel.navigateEpisode(state.allEpisodes[idx - 1])
+                        }
                     },
                     onNextEpisode = {
                         val idx = state.allEpisodes.indexOf(state.episode)
                         if (idx in 0 until state.allEpisodes.lastIndex) {
+                            viewModel.savePlaybackProgress(
+                                positionMs = exoPlayer.currentPosition,
+                                durationMs = durationMs,
+                                activeWatchDeltaMs = pendingActiveWatchMs,
+                            )
+                            pendingActiveWatchMs = 0L
                             viewModel.navigateEpisode(state.allEpisodes[idx + 1])
                         }
                     },

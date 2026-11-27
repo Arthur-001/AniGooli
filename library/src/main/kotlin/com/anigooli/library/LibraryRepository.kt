@@ -455,7 +455,7 @@ class LibraryRepository @Inject constructor(
         )
     }
 
-    /** Records an anime as streamed in watch history and marks [episodeWatched] as watched. */
+    /** Records an anime as recently opened/streamed in watch history without marking the episode completed. */
     suspend fun recordWatchHistory(
         anilistId: Int,
         title: String,
@@ -477,14 +477,6 @@ class LibraryRepository @Inject constructor(
                 malId = malId ?: existing?.malId,
             )
         )
-        watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() + episodeWatched
-        dao.upsertWatchedEpisode(
-            WatchedEpisodeEntity(
-                anilistId = anilistId,
-                episodeNumber = episodeWatched,
-                watchedAt = now,
-            )
-        )
     }
 
     /** Streams the set of watched episode numbers for [anilistId], backed by local storage and memory. */
@@ -495,22 +487,66 @@ class LibraryRepository @Inject constructor(
             set
         }
 
-    /** Marks [episodeNumber] as watched for [anilistId] in both memory and local storage. */
+    /**
+     * Accumulates [activeDeltaMs] of real active playback time for [episodeNumber] and marks it watched
+     * only once accumulated active watch time reaches at least 80% of [durationMs].
+     */
+    suspend fun recordActiveWatchProgress(
+        anilistId: Int,
+        episodeNumber: String,
+        activeDeltaMs: Long,
+        durationMs: Long,
+    ) = withContext(Dispatchers.IO) {
+        if (activeDeltaMs <= 0L && durationMs <= 0L) return@withContext
+        val existing = dao.getWatchedEpisodeRecord(anilistId, episodeNumber)
+        val newActiveWatchMs = (existing?.activeWatchMs ?: 0L) + activeDeltaMs.coerceAtLeast(0L)
+        val effectiveDurationMs = if (durationMs > 0L) durationMs else (existing?.durationMs ?: 0L)
+        val reachedThreshold = hasReachedWatchedThreshold(newActiveWatchMs, effectiveDurationMs)
+        val newIsWatched = (existing?.isWatched == true) || reachedThreshold
+        dao.upsertWatchedEpisode(
+            WatchedEpisodeEntity(
+                anilistId = anilistId,
+                episodeNumber = episodeNumber,
+                activeWatchMs = newActiveWatchMs,
+                durationMs = effectiveDurationMs,
+                isWatched = newIsWatched,
+                watchedAt = System.currentTimeMillis(),
+            )
+        )
+        if (newIsWatched) {
+            watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() + episodeNumber
+        }
+    }
+
+    /** Manually marks [episodeNumber] as watched for [anilistId] in both memory and local storage. */
     suspend fun markEpisodeWatched(anilistId: Int, episodeNumber: String) = withContext(Dispatchers.IO) {
+        val existing = dao.getWatchedEpisodeRecord(anilistId, episodeNumber)
         watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() + episodeNumber
         dao.upsertWatchedEpisode(
             WatchedEpisodeEntity(
                 anilistId = anilistId,
                 episodeNumber = episodeNumber,
+                activeWatchMs = existing?.activeWatchMs ?: 0L,
+                durationMs = existing?.durationMs ?: 0L,
+                isWatched = true,
                 watchedAt = System.currentTimeMillis(),
             )
         )
     }
 
-    /** Unmarks [episodeNumber] as watched for [anilistId] in both memory and local storage. */
+    /** Unmarks [episodeNumber] as watched for [anilistId] and resets its accumulated watch progress. */
     suspend fun unmarkEpisodeWatched(anilistId: Int, episodeNumber: String) = withContext(Dispatchers.IO) {
         watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() - episodeNumber
         dao.deleteWatchedEpisode(anilistId, episodeNumber)
+    }
+
+    companion object {
+        /** Fraction of total episode duration that must be actively watched to auto-mark watched. */
+        const val WATCHED_THRESHOLD_FRACTION = 0.80
+
+        /** Returns true when [activeWatchMs] is at least 80% of a valid [durationMs]. */
+        fun hasReachedWatchedThreshold(activeWatchMs: Long, durationMs: Long): Boolean =
+            durationMs > 0L && activeWatchMs >= (durationMs * WATCHED_THRESHOLD_FRACTION).toLong()
     }
 
     /** Streams all watch history entries ordered most recently watched first. */
