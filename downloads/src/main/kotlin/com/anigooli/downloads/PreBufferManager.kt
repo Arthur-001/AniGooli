@@ -152,7 +152,7 @@ data class PreBufferExportResult(
 )
 
 /**
- * Pure disk-slot manager implementing strict single-slot eviction and reusable segment export.
+ * Disk-slot manager implementing LRU budget eviction and reusable segment export.
  */
 class PreBufferSlotStore(
     private val rootDir: File,
@@ -169,6 +169,45 @@ class PreBufferSlotStore(
                 child.deleteRecursively()
             }
         }
+    }
+
+    /** Updates the last-modified timestamp of [slotKey] for LRU eviction ordering. */
+    fun touchSlot(slotKey: String) {
+        slotDir(slotKey).setLastModified(System.currentTimeMillis())
+    }
+
+    /** Returns total bytes stored inside [slotKey]. */
+    fun slotSizeBytes(slotKey: String): Long {
+        val dir = File(rootDir, slotKey)
+        if (!dir.exists()) return 0L
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    }
+
+    /**
+     * Evicts oldest non-active slots until `totalSizeBytes() + incomingBytes <= capBytes`
+     * or no other slots remain. Returns true if [activeSlotKey] is still within [capBytes].
+     */
+    fun ensureBudgetForIncoming(
+        activeSlotKey: String,
+        incomingBytes: Long,
+        capBytes: Long,
+    ): Boolean {
+        if (!rootDir.exists()) {
+            rootDir.mkdirs()
+            return capBytes > 0L
+        }
+        if (slotSizeBytes(activeSlotKey) >= capBytes) return false
+
+        val otherSlots = rootDir.listFiles()
+            ?.filter { it.isDirectory && it.name != activeSlotKey }
+            ?.sortedBy { it.lastModified() }
+            .orEmpty()
+
+        for (oldSlot in otherSlots) {
+            if (totalSizeBytes() + incomingBytes <= capBytes) break
+            oldSlot.deleteRecursively()
+        }
+        return slotSizeBytes(activeSlotKey) < capBytes
     }
 
     /** Returns total bytes currently stored across [rootDir]. */
@@ -293,14 +332,18 @@ class PreBufferManager @Inject constructor(
     }
 
     /**
-     * Starts pre-buffering [source] under [slotKey], cancelling and evicting any previously cached video
-     * so at most one video occupies pre-buffer storage at any time.
+     * Starts pre-buffering [source] under [slotKey], continuing in the background across UI exits
+     * and evicting older cached slots via LRU only when total storage would exceed [capBytes].
      */
     fun startPreBuffer(slotKey: String, source: StreamSource) {
         scope.launch {
             slotMutex.withLock {
+                if (activeSlotKey == slotKey && activeStreamUrl == source.url && activeJob?.isActive == true) {
+                    store.touchSlot(slotKey)
+                    return@withLock
+                }
                 activeJob?.cancelAndJoin()
-                store.evictAllExcept(slotKey)
+                store.touchSlot(slotKey)
                 activeSlotKey = slotKey
                 activeStreamUrl = source.url
 
@@ -310,9 +353,25 @@ class PreBufferManager @Inject constructor(
                 }.getOrDefault(configuredMb.toLong() * BYTES_PER_MB)
                 val capBytes = PreBufferPolicy.computeEffectiveCapBytes(configuredMb, availableBytes)
 
+                val existingMeta = store.readMeta(slotKey)?.takeIf { it.streamUrl == source.url }
+                val initialBuffered = store.slotSizeBytes(slotKey)
+                val initialFraction = when {
+                    existingMeta?.isComplete == true -> 1f
+                    existingMeta != null && existingMeta.isHls && existingMeta.segmentUrls.isNotEmpty() ->
+                        (existingMeta.completedSegmentUrls.size.toFloat() / existingMeta.segmentUrls.size).coerceIn(0f, 1f)
+                    existingMeta != null && !existingMeta.isHls && existingMeta.mp4TotalBytes > 0L ->
+                        (existingMeta.mp4BytesBuffered.toFloat() / existingMeta.mp4TotalBytes).coerceIn(0f, 1f)
+                    capBytes > 0L -> (initialBuffered.toFloat() / capBytes).coerceIn(0f, 1f)
+                    else -> 0f
+                }
+
                 _state.value = PreBufferState(
                     activeSlotKey = slotKey,
+                    bufferedBytes = initialBuffered,
                     capBytes = capBytes,
+                    estimatedTotalBytes = existingMeta?.mp4TotalBytes ?: 0L,
+                    progressFraction = initialFraction,
+                    isComplete = existingMeta?.isComplete == true,
                 )
 
                 activeJob = scope.launch {
@@ -396,6 +455,7 @@ class PreBufferManager @Inject constructor(
             if (f.exists()) f.length() else 0L
         }
 
+        val initialDone = completed.size >= allSegments.size
         store.writeMeta(
             slotKey,
             PreBufferSlotMeta(
@@ -404,13 +464,20 @@ class PreBufferManager @Inject constructor(
                 segmentUrls = allSegments,
                 initSegmentUrl = parsed.initSegmentUrl,
                 completedSegmentUrls = completed,
-                isComplete = completed.size >= allSegments.size,
+                isComplete = initialDone,
             )
+        )
+        _state.value = PreBufferState(
+            activeSlotKey = slotKey,
+            bufferedBytes = currentBytes,
+            capBytes = capBytes,
+            progressFraction = (completed.size.toFloat() / allSegments.size).coerceIn(0f, 1f),
+            isComplete = initialDone,
         )
 
         for (segUrl in allSegments) {
             if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
-            if (currentBytes >= capBytes) break
+            if (!store.ensureBudgetForIncoming(slotKey, 0L, capBytes)) break
             val dest = store.segmentFile(slotKey, segUrl)
             if (dest.exists() && dest.length() > 0L && segUrl in completed) continue
 
@@ -418,6 +485,7 @@ class PreBufferManager @Inject constructor(
             if (written > 0L) {
                 completed.add(segUrl)
                 currentBytes += written
+                store.ensureBudgetForIncoming(slotKey, 0L, capBytes)
                 val isDone = completed.size >= allSegments.size
                 store.writeMeta(
                     slotKey,
@@ -430,9 +498,7 @@ class PreBufferManager @Inject constructor(
                         isComplete = isDone,
                     )
                 )
-                val fraction = if (capBytes > 0L) {
-                    (completed.size.toFloat() / allSegments.size).coerceIn(0f, 1f)
-                } else 0f
+                val fraction = (completed.size.toFloat() / allSegments.size).coerceIn(0f, 1f)
                 _state.value = PreBufferState(
                     activeSlotKey = slotKey,
                     bufferedBytes = currentBytes,
@@ -454,10 +520,24 @@ class PreBufferManager @Inject constructor(
 
         var offset = if (partFile.exists()) partFile.length() else 0L
         var totalLength = existingMeta?.takeIf { it.streamUrl == source.url }?.mp4TotalBytes ?: 0L
+        val alreadyDone = totalLength > 0L && offset >= totalLength
+        if (offset > 0L || alreadyDone) {
+            val denom = if (totalLength > 0L) totalLength else capBytes
+            _state.value = PreBufferState(
+                activeSlotKey = slotKey,
+                bufferedBytes = offset,
+                capBytes = capBytes,
+                estimatedTotalBytes = totalLength,
+                progressFraction = (offset.toFloat() / denom.toFloat()).coerceIn(0f, 1f),
+                isComplete = alreadyDone,
+            )
+        }
 
         while (kotlinx.coroutines.currentCoroutineContext().isActive && offset < capBytes) {
             if (totalLength > 0L && offset >= totalLength) break
             val endByte = minOf(offset + MP4_CHUNK_BYTES - 1L, capBytes - 1L)
+            val plannedChunk = (endByte - offset + 1L).coerceAtLeast(0L)
+            if (!store.ensureBudgetForIncoming(slotKey, plannedChunk, capBytes)) break
             val reqBuilder = Request.Builder()
                 .url(source.url)
                 .header("Range", "bytes=$offset-$endByte")

@@ -75,4 +75,31 @@ class PreBufferManagerTest {
             dlTarget.deleteRecursively()
         }
     }
+
+    @Test
+    fun `LRU budget eviction keeps previous slot while within cap and deletes it once exceeded`() {
+        val root = Files.createTempDirectory("anigooli_pb_lru").toFile()
+        try {
+            val store = PreBufferSlotStore(root)
+            val capBytes = 1000L
+
+            // Video 1 uses 800 bytes
+            val slot1 = "101_1_1080p_JAPANESE"
+            store.mp4PartialFile(slot1).writeBytes(ByteArray(800))
+            store.touchSlot(slot1)
+
+            // Video 2 starts with 150 bytes (total = 950 <= 1000): slot1 stays cached
+            val slot2 = "101_2_1080p_JAPANESE"
+            assertTrue(store.ensureBudgetForIncoming(slot2, 150L, capBytes))
+            store.mp4PartialFile(slot2).writeBytes(ByteArray(150))
+            assertTrue(File(root, slot1).exists())
+
+            // Video 2 needs 200 more bytes (950 + 200 = 1150 > 1000): slot1 is evicted so slot2 can continue
+            assertTrue(store.ensureBudgetForIncoming(slot2, 200L, capBytes))
+            assertFalse(File(root, slot1).exists())
+            assertTrue(File(root, slot2).exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

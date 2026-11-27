@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Rational
 import android.view.View
 import android.view.WindowManager
@@ -17,9 +18,11 @@ import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -52,8 +55,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -70,6 +71,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -107,6 +111,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val SEEK_DRAG_WINDOW_MS = 90_000f
 private const val DOUBLE_TAP_SEEK_MS = 10_000L
@@ -118,12 +123,13 @@ private const val PIP_RATIO_DEN = 9
 private const val MIN_RAM_MS = 15_000
 private const val REBUFFER_MIN_MS = 1_500
 private const val REBUFFER_AFTER_SEEK_MS = 3_000
-private const val BYTES_PER_MB = 1024.0 * 1024.0
 private const val FAST_FORWARD_HOLD_SPEED = 2.0f
-private const val LEFT_ZONE_RATIO = 0.4f
-private const val RIGHT_ZONE_RATIO = 0.6f
+private const val HALF_SCREEN_RATIO = 0.5f
 private const val MAX_PINCH_ZOOM = 2.5f
 private const val MIN_PINCH_ZOOM = 1.0f
+private const val PERCENT_MAX = 100
+private const val MAX_SYSTEM_BRIGHTNESS = 255f
+private const val DEFAULT_SYSTEM_BRIGHTNESS = 128
 private val SPEED_OPTIONS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
 private enum class GestureHudType { SEEK, VOLUME, BRIGHTNESS, SPEED }
@@ -252,7 +258,21 @@ private fun PlayerScreen(
     var volumeLevel by remember {
         mutableFloatStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume)
     }
-    var brightnessLevel by remember { mutableFloatStateOf(0.5f) }
+    var brightnessLevel by remember {
+        val winBright = (context as? ComponentActivity)?.window?.attributes?.screenBrightness ?: -1f
+        val initial = if (winBright in 0f..1f) {
+            winBright
+        } else {
+            runCatching {
+                Settings.System.getInt(
+                    context.contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    DEFAULT_SYSTEM_BRIGHTNESS,
+                ) / MAX_SYSTEM_BRIGHTNESS
+            }.getOrDefault(HALF_SCREEN_RATIO).coerceIn(0.01f, 1f)
+        }
+        mutableFloatStateOf(initial)
+    }
     var tapIndicatorText by remember { mutableStateOf<String?>(null) }
     var viewportSize by remember { mutableStateOf(IntSize(1, 1)) }
     var playerErrorText by remember { mutableStateOf<String?>(null) }
@@ -464,6 +484,7 @@ private fun PlayerScreen(
                             Modifier
                                 .pointerInput(durationMs) {
                                     var dragType: GestureHudType? = null
+                                    var dragStartX = 0f
                                     var startPosMs = 0L
                                     var accumulatedX = 0f
                                     var accumulatedVol = volumeLevel
@@ -471,16 +492,12 @@ private fun PlayerScreen(
 
                                     detectDragGestures(
                                         onDragStart = { startOffset ->
-                                            val width = viewportSize.width.coerceAtLeast(1).toFloat()
                                             dragType = null
+                                            dragStartX = startOffset.x
                                             accumulatedX = 0f
                                             startPosMs = exoPlayer.currentPosition
                                             accumulatedVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume
                                             accumulatedBright = brightnessLevel
-                                            // Defer vertical vs horizontal decision to first drag delta
-                                            if (startOffset.x < width * LEFT_ZONE_RATIO) {
-                                                // left zone candidate
-                                            }
                                         },
                                         onDrag = { change, dragAmount ->
                                             change.consume()
@@ -489,12 +506,10 @@ private fun PlayerScreen(
                                             if (dragType == null) {
                                                 dragType = if (kotlin.math.abs(dragAmount.x) >= kotlin.math.abs(dragAmount.y)) {
                                                     GestureHudType.SEEK
-                                                } else if (change.position.x < width * LEFT_ZONE_RATIO) {
+                                                } else if (dragStartX < width * HALF_SCREEN_RATIO) {
                                                     GestureHudType.BRIGHTNESS
-                                                } else if (change.position.x > width * RIGHT_ZONE_RATIO) {
-                                                    GestureHudType.VOLUME
                                                 } else {
-                                                    GestureHudType.SEEK
+                                                    GestureHudType.VOLUME
                                                 }
                                             }
                                             activeHud = dragType
@@ -513,7 +528,7 @@ private fun PlayerScreen(
                                                 GestureHudType.VOLUME -> {
                                                     accumulatedVol = (accumulatedVol - dragAmount.y / height).coerceIn(0f, 1f)
                                                     volumeLevel = accumulatedVol
-                                                    val step = (accumulatedVol * maxVolume).toInt().coerceIn(0, maxVolume)
+                                                    val step = (accumulatedVol * maxVolume).roundToInt().coerceIn(0, maxVolume)
                                                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, step, 0)
                                                 }
                                                 else -> {}
@@ -569,16 +584,21 @@ private fun PlayerScreen(
                             val sign = if (seekDeltaMs >= 0) "+" else "-"
                             "${formatMs(seekPreviewMs)}  ($sign${formatMs(kotlin.math.abs(seekDeltaMs))})"
                         }
-                        GestureHudType.BRIGHTNESS -> "Brightness ${(brightnessLevel * 100).toInt()}%"
-                        GestureHudType.VOLUME -> "Volume ${(volumeLevel * 100).toInt()}%"
+                        GestureHudType.BRIGHTNESS -> "Brightness ${(brightnessLevel * PERCENT_MAX).roundToInt()}%"
+                        GestureHudType.VOLUME -> "Volume ${(volumeLevel * PERCENT_MAX).roundToInt()}%"
                         GestureHudType.SPEED -> "2.0x Speed >>"
                     }
                     Text(label, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     if (hud == GestureHudType.BRIGHTNESS || hud == GestureHudType.VOLUME) {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
                         LinearProgressIndicator(
                             progress = { if (hud == GestureHudType.BRIGHTNESS) brightnessLevel else volumeLevel },
-                            modifier = Modifier.width(120.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = Color.White.copy(alpha = 0.25f),
+                            modifier = Modifier
+                                .width(140.dp)
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
                         )
                     }
                 }
@@ -882,12 +902,19 @@ private fun PlayerControlsOverlay(
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (!state.isLocalFile && state.preBufferState.capBytes > 0L) {
-                    val bufMb = String.format(Locale.getDefault(), "%.0f", state.preBufferState.bufferedBytes / BYTES_PER_MB)
-                    val capMb = String.format(Locale.getDefault(), "%.0f", state.preBufferState.capBytes / BYTES_PER_MB)
-                    val suffix = if (state.preBufferState.isComplete) "Pre-buffered Ready" else "Pre-buffer: $bufMb / $capMb MB"
+                    val pct = if (state.preBufferState.isComplete) {
+                        PERCENT_MAX
+                    } else {
+                        (state.preBufferState.progressFraction * PERCENT_MAX).roundToInt().coerceIn(0, PERCENT_MAX)
+                    }
+                    val suffix = if (state.preBufferState.isComplete) {
+                        "Pre-buffered: 100%"
+                    } else {
+                        "Pre-buffer: $pct%"
+                    }
                     Text(
                         text = suffix,
-                        color = Color.White.copy(alpha = 0.75f),
+                        color = Color.White.copy(alpha = 0.8f),
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
@@ -953,29 +980,15 @@ private fun PlayerControlsOverlay(
             ) {
                 Text(formatMs(currentPosMs), color = Color.White, style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.width(10.dp))
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    if (durationMs > 0L) {
-                        val bufFraction = (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                        LinearProgressIndicator(
-                            progress = { bufFraction },
-                            color = Color.White.copy(alpha = 0.45f),
-                            trackColor = Color.White.copy(alpha = 0.18f),
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                        )
-                    }
-                    Slider(
-                        value = if (durationMs > 0L) (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f,
-                        onValueChange = { frac ->
-                            if (durationMs > 0L) onSeekTo((frac * durationMs).toLong())
-                        },
-                        colors = SliderDefaults.colors(
-                            thumbColor = MaterialTheme.colorScheme.primary,
-                            activeTrackColor = MaterialTheme.colorScheme.primary,
-                            inactiveTrackColor = Color.Transparent,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                VideoSeekBar(
+                    currentPosMs = currentPosMs,
+                    durationMs = durationMs,
+                    bufferedPosMs = bufferedPosMs,
+                    preBufferFraction = state.preBufferState.progressFraction,
+                    showPreBuffer = !state.isLocalFile && state.preBufferState.capBytes > 0L,
+                    onSeekTo = onSeekTo,
+                    modifier = Modifier.weight(1f),
+                )
                 Spacer(Modifier.width(10.dp))
                 Text(formatMs(durationMs), color = Color.White, style = MaterialTheme.typography.labelMedium)
             }
@@ -1011,6 +1024,120 @@ private fun PlayerControlsOverlay(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun VideoSeekBar(
+    currentPosMs: Long,
+    durationMs: Long,
+    bufferedPosMs: Long,
+    preBufferFraction: Float,
+    showPreBuffer: Boolean,
+    onSeekTo: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val trackBgColor = Color.White.copy(alpha = 0.20f)
+    val preBufferColor = Color.White.copy(alpha = 0.55f)
+
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+
+    val currentFraction = if (durationMs > 0L) {
+        (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    val displayFraction = if (isDragging) dragFraction else currentFraction
+    val exoBufFraction = if (durationMs > 0L) {
+        (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    val preBufEnd = if (showPreBuffer) preBufferFraction.coerceIn(0f, 1f) else 0f
+
+    Canvas(
+        modifier = modifier
+            .height(28.dp)
+            .pointerInput(durationMs) {
+                detectTapGestures { offset ->
+                    if (durationMs > 0L && size.width > 0) {
+                        val frac = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        onSeekTo((frac * durationMs).toLong())
+                    }
+                }
+            }
+            .pointerInput(durationMs) {
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        if (durationMs > 0L && size.width > 0) {
+                            isDragging = true
+                            dragFraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            onSeekTo((dragFraction * durationMs).toLong())
+                        }
+                    },
+                    onHorizontalDrag = { change, _ ->
+                        change.consume()
+                        if (durationMs > 0L && size.width > 0) {
+                            dragFraction = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            onSeekTo((dragFraction * durationMs).toLong())
+                        }
+                    },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                )
+            },
+    ) {
+        val trackHeight = 3.dp.toPx()
+        val centerY = size.height / 2f
+        val trackTop = centerY - trackHeight / 2f
+        val radius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
+        val width = size.width
+
+        // Unbuffered track background
+        drawRoundRect(
+            color = trackBgColor,
+            topLeft = Offset(0f, trackTop),
+            size = Size(width, trackHeight),
+            cornerRadius = radius,
+        )
+
+        // Pre-buffered sections (light gray): disk pre-buffer + ExoPlayer RAM buffer ahead
+        if (preBufEnd > 0f) {
+            drawRoundRect(
+                color = preBufferColor,
+                topLeft = Offset(0f, trackTop),
+                size = Size(width * preBufEnd, trackHeight),
+                cornerRadius = radius,
+            )
+        }
+        if (exoBufFraction > currentFraction) {
+            val startX = width * currentFraction
+            val bufWidth = (width * (exoBufFraction - currentFraction)).coerceAtLeast(0f)
+            drawRoundRect(
+                color = preBufferColor,
+                topLeft = Offset(startX, trackTop),
+                size = Size(bufWidth, trackHeight),
+                cornerRadius = radius,
+            )
+        }
+
+        // Watched section (thin purple bar) connected directly to the circle thumb with no gap
+        val watchedWidth = width * displayFraction
+        if (watchedWidth > 0f) {
+            drawRoundRect(
+                color = primaryColor,
+                topLeft = Offset(0f, trackTop),
+                size = Size(watchedWidth, trackHeight),
+                cornerRadius = radius,
+            )
+        }
+
+        // Bold filled circle thumb (no vertical line, no gap)
+        val thumbRadius = if (isDragging) 8.dp.toPx() else 6.5.dp.toPx()
+        val thumbX = watchedWidth.coerceIn(thumbRadius, (width - thumbRadius).coerceAtLeast(thumbRadius))
+        drawCircle(
+            color = primaryColor,
+            radius = thumbRadius,
+            center = Offset(thumbX, centerY),
+        )
     }
 }
 
