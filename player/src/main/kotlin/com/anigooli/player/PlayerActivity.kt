@@ -70,6 +70,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -294,6 +295,40 @@ private fun PlayerScreen(
     var tapIndicatorText by remember { mutableStateOf<String?>(null) }
     var viewportSize by remember { mutableStateOf(IntSize(1, 1)) }
     var playerErrorText by remember { mutableStateOf<String?>(null) }
+    var offlineCachedOnly by remember { mutableStateOf(false) }
+    var knownDurationMs by remember { mutableLongStateOf(0L) }
+    val latestState by rememberUpdatedState(state)
+
+    fun maxOfflineSeekMs(): Long {
+        val total = maxOf(durationMs, knownDurationMs)
+        val frac = latestState.preBufferState.progressFraction
+        if (!offlineCachedOnly || total <= 0L || frac >= 0.999f) return total.coerceAtLeast(0L)
+        return ((total * frac).toLong() - 1_000L).coerceAtLeast(0L)
+    }
+
+    fun seekSafely(targetMs: Long) {
+        val total = maxOf(durationMs, knownDurationMs).coerceAtLeast(0L)
+        val clamped = if (offlineCachedOnly && total > 0L && latestState.preBufferState.progressFraction < 0.999f) {
+            val limit = maxOfflineSeekMs()
+            if (targetMs > limit) {
+                tapIndicatorText = "Only ${(latestState.preBufferState.progressFraction * 100).toInt()}% pre-buffered offline"
+                limit
+            } else {
+                targetMs.coerceAtLeast(0L)
+            }
+        } else {
+            targetMs.coerceIn(0L, total)
+        }
+        if (exoPlayer.playbackState == Player.STATE_IDLE || playerErrorText != null) {
+            playerErrorText = null
+            exoPlayer.prepare()
+            exoPlayer.seekTo(clamped)
+            exoPlayer.playWhenReady = true
+        } else {
+            exoPlayer.seekTo(clamped)
+        }
+        currentPosMs = clamped
+    }
 
     // Wire player lifecycle & listener
     DisposableEffect(exoPlayer) {
@@ -306,12 +341,35 @@ private fun PlayerScreen(
                 isBuffering = playbackState == Player.STATE_BUFFERING
                 if (playbackState == Player.STATE_READY) {
                     playerErrorText = null
-                    durationMs = exoPlayer.duration.coerceAtLeast(0L)
+                    val d = exoPlayer.duration.coerceAtLeast(0L)
+                    durationMs = d
+                    if (d > knownDurationMs) knownDurationMs = d
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 isBuffering = false
+                val isNetworkErr = error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                    error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+                    error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND
+                val hasCachedData = !latestState.isLocalFile && latestState.preBufferState.bufferedBytes > 0L
+                if (isNetworkErr && hasCachedData) {
+                    if (!offlineCachedOnly) {
+                        offlineCachedOnly = true
+                        playerErrorText = null
+                        tapIndicatorText = "Offline • Playing pre-buffered section"
+                        val resumeAt = currentPosMs.coerceAtMost(maxOfflineSeekMs())
+                        exoPlayer.prepare()
+                        exoPlayer.seekTo(resumeAt)
+                        exoPlayer.playWhenReady = true
+                    } else {
+                        playerErrorText = null
+                        tapIndicatorText = "Pre-buffered section ended"
+                    }
+                    return
+                }
                 playerErrorText = error.localizedMessage ?: "Playback failed"
             }
         }
@@ -331,6 +389,8 @@ private fun PlayerScreen(
     // Prepare media source whenever stream source or local file changes
     LaunchedEffect(state.selectedSource, state.localVideoPath, state.isLocalFile) {
         playerErrorText = null
+        offlineCachedOnly = false
+        knownDurationMs = 0L
         if (state.isLocalFile) {
             val path = state.localVideoPath ?: return@LaunchedEffect
             val dataFactory = DefaultDataSource.Factory(context)
@@ -346,6 +406,8 @@ private fun PlayerScreen(
                 userAgent = state.userAgent,
                 referer = source.referer,
                 origin = source.origin,
+                slotKeyOverride = state.activeSlotKey,
+                offlineCachedOnlyProvider = { offlineCachedOnly },
             )
             val builder = MediaItem.Builder().setUri(source.url.toUri())
             if (source.isHls) {
@@ -395,7 +457,9 @@ private fun PlayerScreen(
             lastPollMs = now
 
             currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-            durationMs = exoPlayer.duration.coerceAtLeast(0L)
+            val d = exoPlayer.duration.coerceAtLeast(0L)
+            durationMs = d
+            if (d > knownDurationMs) knownDurationMs = d
             bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
             if (exoPlayer.isPlaying) {
                 val speed = exoPlayer.playbackParameters.speed.coerceAtLeast(0.25f)
@@ -478,9 +542,7 @@ private fun PlayerScreen(
                                 onDoubleTap = { offset ->
                                     val width = viewportSize.width.coerceAtLeast(1)
                                     val delta = if (offset.x < width / 2f) -DOUBLE_TAP_SEEK_MS else DOUBLE_TAP_SEEK_MS
-                                    val nextPos = (exoPlayer.currentPosition + delta).coerceIn(0L, durationMs.coerceAtLeast(0L))
-                                    exoPlayer.seekTo(nextPos)
-                                    currentPosMs = nextPos
+                                    seekSafely(exoPlayer.currentPosition + delta)
                                     tapIndicatorText = if (delta < 0) "-10s" else "+10s"
                                 },
                                 onLongPress = {
@@ -554,8 +616,7 @@ private fun PlayerScreen(
                                         },
                                         onDragEnd = {
                                             if (dragType == GestureHudType.SEEK) {
-                                                exoPlayer.seekTo(seekPreviewMs)
-                                                currentPosMs = seekPreviewMs
+                                                seekSafely(seekPreviewMs)
                                             }
                                             dragType = null
                                             activeHud = null
@@ -731,20 +792,23 @@ private fun PlayerScreen(
                     state = state,
                     isPlaying = isPlaying,
                     currentPosMs = currentPosMs,
-                    durationMs = durationMs,
+                    durationMs = maxOf(durationMs, knownDurationMs),
                     bufferedPosMs = bufferedPosMs,
                     onBack = onBack,
                     onPlayPause = {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        if (exoPlayer.playbackState == Player.STATE_IDLE) {
+                            seekSafely(currentPosMs)
+                        } else if (exoPlayer.isPlaying) {
+                            exoPlayer.pause()
+                        } else {
+                            exoPlayer.play()
+                        }
                     },
                     onSeekBy = { delta ->
-                        val next = (exoPlayer.currentPosition + delta).coerceIn(0L, durationMs.coerceAtLeast(0L))
-                        exoPlayer.seekTo(next)
-                        currentPosMs = next
+                        seekSafely(exoPlayer.currentPosition + delta)
                     },
                     onSeekTo = { target ->
-                        exoPlayer.seekTo(target)
-                        currentPosMs = target
+                        seekSafely(target)
                     },
                     onPrevEpisode = {
                         val idx = state.allEpisodes.indexOf(state.episode)

@@ -116,6 +116,8 @@ data class PlayerUiState(
     val statusBanner: String? = null,
     /** Live single-slot pre-buffer state. */
     val preBufferState: PreBufferState = PreBufferState(),
+    /** Deterministic slot key for the current stream's disk cache. */
+    val activeSlotKey: String? = null,
     /** Parsed timed subtitle cues for the active video. */
     val subtitleCues: List<SubtitleCue> = emptyList(),
     /** Raw subtitle text cached for standalone subtitle download. */
@@ -207,9 +209,19 @@ class PlayerViewModel @Inject constructor(
         }
 
         val bundle = payload.streamBundle
-        val activeSource = bundle?.selectedSource
+        val rawActiveSource = bundle?.selectedSource
         val sources = bundle?.sources.orEmpty()
         val actualAudio = bundle?.actualAudioTrack ?: resolvedAudio
+        val slotKey = if (!payload.isLocalFile && rawActiveSource != null && payload.anilistId != null) {
+            PreBufferPolicy.slotKey(payload.anilistId, payload.episode, rawActiveSource.qualityLabel, actualAudio.name)
+        } else {
+            null
+        }
+        val activeSource = if (slotKey != null && rawActiveSource != null) {
+            preBufferManager.resolveReusableSource(slotKey, rawActiveSource)
+        } else {
+            rawActiveSource
+        }
 
         _uiState.value = PlayerUiState(
             anilistId = payload.anilistId,
@@ -228,11 +240,12 @@ class PlayerViewModel @Inject constructor(
             isDubFallback = bundle?.isDubFallback == true,
             targetSeekPositionMs = resumePos,
             preBufferState = preBufferManager.state.value,
+            activeSlotKey = slotKey,
             subtitleStyle = _uiState.value.subtitleStyle,
         )
 
-        if (!payload.isLocalFile && activeSource != null && payload.anilistId != null) {
-            startPreBufferFor(payload.anilistId, payload.episode, activeSource, actualAudio)
+        if (slotKey != null && activeSource != null) {
+            preBufferManager.startPreBuffer(slotKey, activeSource)
         }
         loadSubtitlesForCurrentSource()
         if (payload.anilistId != null) {
@@ -551,14 +564,22 @@ class PlayerViewModel @Inject constructor(
             preferredQuality = preferredQuality,
         )
         result.onSuccess { bundle: EpisodeStreamBundle ->
+            val slotKey = PreBufferPolicy.slotKey(
+                anilistId = anilistId,
+                episode = episode,
+                qualityLabel = bundle.selectedSource.qualityLabel,
+                audioTrack = bundle.actualAudioTrack.name,
+            )
+            val resolvedSource = preBufferManager.resolveReusableSource(slotKey, bundle.selectedSource)
             _uiState.update {
                 it.copy(
                     episode = episode,
                     sources = bundle.sources,
-                    selectedSource = bundle.selectedSource,
+                    selectedSource = resolvedSource,
                     audioTrack = bundle.actualAudioTrack,
                     isDubFallback = bundle.isDubFallback,
                     targetSeekPositionMs = preservePositionMs,
+                    activeSlotKey = slotKey,
                     isLoading = false,
                     statusBanner = if (bundle.isDubFallback) {
                         "English Dub unavailable — playing Japanese"
@@ -566,10 +587,33 @@ class PlayerViewModel @Inject constructor(
                 )
             }
             loadSubtitlesForCurrentSource()
-            startPreBufferFor(anilistId, episode, bundle.selectedSource, bundle.actualAudioTrack)
+            preBufferManager.startPreBuffer(slotKey, resolvedSource)
         }.onFailure { err ->
-            _uiState.update {
-                it.copy(isLoading = false, errorMessage = err.message ?: "Failed to load episode $episode")
+            val cached = preBufferManager.findCachedSourceForEpisode(anilistId, episode)
+            if (cached != null) {
+                val slotKey = PreBufferPolicy.slotKey(
+                    anilistId = anilistId,
+                    episode = episode,
+                    qualityLabel = cached.qualityLabel,
+                    audioTrack = audioTrack.name,
+                )
+                _uiState.update {
+                    it.copy(
+                        episode = episode,
+                        sources = listOf(cached),
+                        selectedSource = cached,
+                        audioTrack = audioTrack,
+                        targetSeekPositionMs = preservePositionMs,
+                        activeSlotKey = slotKey,
+                        isLoading = false,
+                        statusBanner = "Offline — playing pre-buffered cache",
+                    )
+                }
+                preBufferManager.startPreBuffer(slotKey, cached)
+            } else {
+                _uiState.update {
+                    it.copy(isLoading = false, errorMessage = err.message ?: "Failed to load episode $episode")
+                }
             }
         }
     }
@@ -590,6 +634,7 @@ class PlayerViewModel @Inject constructor(
         audioTrack: AudioTrack,
     ) {
         val slotKey = PreBufferPolicy.slotKey(anilistId, episode, source.qualityLabel, audioTrack.name)
+        _uiState.update { it.copy(activeSlotKey = slotKey) }
         preBufferManager.startPreBuffer(slotKey, source)
     }
 

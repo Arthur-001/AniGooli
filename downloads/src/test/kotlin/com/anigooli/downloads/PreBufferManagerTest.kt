@@ -102,4 +102,73 @@ class PreBufferManagerTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun `trimToCachedPlaylist stops at first uncached segment and appends ENDLIST`() {
+        val mediaPlaylist = """
+            #EXTM3U
+            #EXT-X-VERSION:3
+            #EXT-X-TARGETDURATION:6
+            #EXTINF:6.0,
+            seg0.ts
+            #EXTINF:6.0,
+            seg1.ts
+            #EXTINF:6.0,
+            seg2.ts
+        """.trimIndent()
+        val cached = setOf("https://cdn.example.com/hls/seg0.ts", "https://cdn.example.com/hls/seg1.ts")
+        val trimmed = HlsPlaylistParser.trimToCachedPlaylist(
+            playlistText = mediaPlaylist,
+            baseUrl = "https://cdn.example.com/hls/index.m3u8",
+            isVariantCached = { false },
+            isSegmentCached = { it in cached },
+        )
+        assertTrue(trimmed.contains("https://cdn.example.com/hls/seg0.ts"))
+        assertTrue(trimmed.contains("https://cdn.example.com/hls/seg1.ts"))
+        assertFalse(trimmed.contains("seg2.ts"))
+        assertTrue(trimmed.trimEnd().endsWith("#EXT-X-ENDLIST"))
+    }
+
+    @Test
+    fun `isSameStream matches URLs with rotating query tokens`() {
+        assertTrue(
+            PreBufferPolicy.isSameStream(
+                "https://cdn.example.com/video/master.m3u8?token=abc&exp=1",
+                "https://cdn.example.com/video/master.m3u8?token=xyz&exp=2",
+            )
+        )
+        assertFalse(
+            PreBufferPolicy.isSameStream(
+                "https://cdn.example.com/video/ep1.mp4",
+                "https://cdn.example.com/video/ep2.mp4",
+            )
+        )
+    }
+
+    @Test
+    fun `hasVerifiedCompleteCache requires actual files on disk`() {
+        val root = Files.createTempDirectory("anigooli_pb_verify").toFile()
+        try {
+            val store = PreBufferSlotStore(root)
+            val slot = "202_1_1080p_JAPANESE"
+            val streamUrl = "https://cdn.example.com/ep1.mp4"
+            store.writeMeta(
+                slot,
+                PreBufferSlotMeta(
+                    streamUrl = streamUrl,
+                    isHls = false,
+                    mp4BytesBuffered = 100L,
+                    mp4TotalBytes = 100L,
+                    isComplete = true,
+                )
+            )
+            // Missing mp4_partial.bin on disk -> not verified
+            assertEquals(null, store.hasVerifiedCompleteCache(slot))
+
+            store.mp4PartialFile(slot).writeBytes(ByteArray(100))
+            assertTrue(store.hasVerifiedCompleteCache(slot) != null)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

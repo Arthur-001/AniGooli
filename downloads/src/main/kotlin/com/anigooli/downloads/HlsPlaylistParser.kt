@@ -76,4 +76,81 @@ object HlsPlaylistParser {
         val baseDir = if (lastSlash >= 0) baseNoQuery.substring(0, lastSlash + 1) else "$origin/"
         return "$baseDir$trimmed"
     }
+
+    /**
+     * Rewrites [playlistText] into an offline-playable playlist containing only cached variants
+     * (for master playlists) or the contiguous prefix of cached segments (for media playlists).
+     */
+    fun trimToCachedPlaylist(
+        playlistText: String,
+        baseUrl: String,
+        isVariantCached: (String) -> Boolean,
+        isSegmentCached: (String) -> Boolean,
+    ): String {
+        val normalized = playlistText.replace("\r", "")
+        val lines = normalized.split("\n")
+        if (lines.any { it.trim().startsWith("#EXT-X-STREAM-INF:") }) {
+            val out = ArrayList<String>()
+            var i = 0
+            var keptAny = false
+            while (i < lines.size) {
+                val line = lines[i].trim()
+                if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                    var uriIdx = i + 1
+                    while (uriIdx < lines.size && (lines[uriIdx].trim().isEmpty() || lines[uriIdx].trim().startsWith("#"))) {
+                        uriIdx++
+                    }
+                    val rawUri = lines.getOrNull(uriIdx)?.trim().orEmpty()
+                    val resolved = if (rawUri.isNotEmpty()) resolveUrl(rawUri, baseUrl) else ""
+                    if (resolved.isNotEmpty() && isVariantCached(resolved)) {
+                        out.add(lines[i])
+                        out.add(resolved)
+                        keptAny = true
+                        break
+                    }
+                    i = uriIdx + 1
+                    continue
+                }
+                if (line.isNotEmpty()) out.add(lines[i])
+                i++
+            }
+            if (!keptAny) return playlistText
+            return out.joinToString("\n")
+        }
+
+        val out = ArrayList<String>()
+        val pendingSegmentMeta = ArrayList<String>()
+        var stopped = false
+        for (rawLine in lines) {
+            val line = rawLine.trim()
+            if (line.isEmpty()) continue
+            if (line.startsWith("#EXT-X-ENDLIST")) continue
+            if (line.startsWith("#EXT-X-MAP:")) {
+                val rawUri = mapUriRegex.find(line)?.groupValues?.getOrNull(1)
+                if (!rawUri.isNullOrBlank()) {
+                    val resolved = resolveUrl(rawUri, baseUrl)
+                    out.add(line.replace(rawUri, resolved))
+                } else {
+                    out.add(line)
+                }
+            } else if (line.startsWith("#EXTINF:") || line.startsWith("#EXT-X-BYTERANGE:") || line.startsWith("#EXT-X-DISCONTINUITY")) {
+                pendingSegmentMeta.add(line)
+            } else if (line.startsWith("#")) {
+                out.add(line)
+            } else {
+                val resolved = resolveUrl(line, baseUrl)
+                if (!isSegmentCached(resolved)) {
+                    stopped = true
+                    break
+                }
+                out.addAll(pendingSegmentMeta)
+                pendingSegmentMeta.clear()
+                out.add(resolved)
+            }
+        }
+        if (stopped || !lines.any { it.trim() == "#EXT-X-ENDLIST" }) {
+            out.add("#EXT-X-ENDLIST")
+        }
+        return out.joinToString("\n")
+    }
 }

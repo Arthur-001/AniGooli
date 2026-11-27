@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.StatFs
 import android.util.Log
 import androidx.media3.common.C
+import androidx.media3.datasource.ByteArrayDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.FileDataSource
@@ -35,6 +36,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -99,6 +102,14 @@ object PreBufferPolicy {
         val digest = MessageDigest.getInstance("SHA-256").digest(url.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { "%02x".format(it) }.take(DIGEST_PREFIX_HEX)
     }
+
+    /** Matches stream URLs ignoring rotating query tokens/timestamps. */
+    fun isSameStream(firstUrl: String, secondUrl: String): Boolean {
+        if (firstUrl == secondUrl) return true
+        val a = firstUrl.substringBefore('?')
+        val b = secondUrl.substringBefore('?')
+        return a.isNotEmpty() && a == b
+    }
 }
 
 /** Live pre-buffer progress exposed to the video player UI. */
@@ -144,6 +155,10 @@ data class PreBufferSlotMeta(
     val referer: String = "",
     /** Optional HTTP Origin header for stream requests. */
     val origin: String = "",
+    /** Optional subtitle URL for cached playback reuse. */
+    val subtitleUrl: String? = null,
+    /** Optional separate audio URL for cached playback reuse. */
+    val audioUrl: String? = null,
 )
 
 /** Result returned when exporting pre-buffered segments/bytes to a permanent download directory. */
@@ -257,6 +272,20 @@ class PreBufferSlotStore(
         return null
     }
 
+    /** Returns true when [slotKey] has a complete cache verified on disk. */
+    fun hasVerifiedCompleteCache(slotKey: String): PreBufferSlotMeta? {
+        val meta = readMeta(slotKey) ?: return null
+        if (!meta.isComplete) return null
+        val verified = if (meta.isHls) {
+            meta.segmentUrls.isNotEmpty() &&
+                meta.completedSegmentUrls.size >= meta.segmentUrls.size &&
+                playlistFile(slotKey, meta.streamUrl).exists()
+        } else {
+            mp4PartialFile(slotKey).let { it.exists() && it.length() > 0L }
+        }
+        return if (verified) meta else null
+    }
+
     /** Returns the MP4 partial file path inside [slotKey]. */
     fun mp4PartialFile(slotKey: String): File = File(slotDir(slotKey), "mp4_partial.bin")
 
@@ -365,6 +394,29 @@ class PreBufferManager @Inject constructor(
             referer = meta.referer,
             origin = meta.origin,
             isHls = meta.isHls,
+            subtitleUrl = meta.subtitleUrl,
+            audioUrl = meta.audioUrl,
+        )
+    }
+
+    /**
+     * If [slotKey] already has a 100% pre-buffered copy verified on disk, returns a [StreamSource]
+     * bound to the cached stream URL so rotating CDN tokens/URLs on re-entry never restart
+     * pre-buffering from 0%.
+     */
+    fun resolveReusableSource(slotKey: String, freshSource: StreamSource): StreamSource {
+        val meta = store.hasVerifiedCompleteCache(slotKey) ?: return freshSource
+        store.touchSlot(slotKey)
+        return StreamSource(
+            qualityLabel = meta.qualityLabel.ifBlank { freshSource.qualityLabel },
+            height = freshSource.height,
+            serverName = meta.serverName.ifBlank { freshSource.serverName },
+            url = meta.streamUrl,
+            referer = meta.referer.ifBlank { freshSource.referer },
+            origin = meta.origin.ifBlank { freshSource.origin },
+            isHls = meta.isHls,
+            subtitleUrl = freshSource.subtitleUrl ?: meta.subtitleUrl,
+            audioUrl = freshSource.audioUrl ?: meta.audioUrl,
         )
     }
 
@@ -387,6 +439,8 @@ class PreBufferManager @Inject constructor(
      * and evicting older cached slots via LRU only when total storage would exceed [capBytes].
      */
     fun startPreBuffer(slotKey: String, source: StreamSource) {
+        activeSlotKey = slotKey
+        activeStreamUrl = source.url
         scope.launch {
             slotMutex.withLock {
                 if (activeSlotKey == slotKey && activeStreamUrl == source.url && activeJob?.isActive == true) {
@@ -405,12 +459,12 @@ class PreBufferManager @Inject constructor(
                 val capBytes = PreBufferPolicy.computeEffectiveCapBytes(configuredMb, availableBytes)
 
                 val existingMeta = store.readMeta(slotKey)?.takeIf {
-                    it.streamUrl == source.url ||
-                        it.streamUrl.substringBefore('?') == source.url.substringBefore('?')
+                    PreBufferPolicy.isSameStream(it.streamUrl, source.url)
                 }
                 val initialBuffered = store.slotSizeBytes(slotKey)
+                val verifiedComplete = store.hasVerifiedCompleteCache(slotKey) != null && existingMeta != null
                 val initialFraction = when {
-                    existingMeta?.isComplete == true -> 1f
+                    verifiedComplete -> 1f
                     existingMeta != null && existingMeta.isHls && existingMeta.segmentUrls.isNotEmpty() ->
                         (existingMeta.completedSegmentUrls.size.toFloat() / existingMeta.segmentUrls.size).coerceIn(0f, 1f)
                     existingMeta != null && !existingMeta.isHls && existingMeta.mp4TotalBytes > 0L ->
@@ -425,8 +479,13 @@ class PreBufferManager @Inject constructor(
                     capBytes = capBytes,
                     estimatedTotalBytes = existingMeta?.mp4TotalBytes ?: 0L,
                     progressFraction = initialFraction,
-                    isComplete = existingMeta?.isComplete == true,
+                    isComplete = verifiedComplete,
                 )
+
+                if (verifiedComplete) {
+                    activeJob = null
+                    return@withLock
+                }
 
                 activeJob = scope.launch {
                     runCatching {
@@ -455,13 +514,15 @@ class PreBufferManager @Inject constructor(
     }
 
     /**
-     * Creates a Media3 [DataSource.Factory] that serves pre-buffered HLS segments or fully buffered MP4
+     * Creates a Media3 [DataSource.Factory] that serves pre-buffered HLS segments or MP4 prefixes
      * straight from disk, transparently falling back to [OkHttpDataSource] on cache misses.
      */
     fun createDataSourceFactory(
         userAgent: String,
         referer: String,
         origin: String,
+        slotKeyOverride: String? = null,
+        offlineCachedOnlyProvider: () -> Boolean = { false },
     ): DataSource.Factory {
         val defaultProps = buildMap {
             if (referer.isNotBlank()) put("Referer", referer)
@@ -475,7 +536,8 @@ class PreBufferManager @Inject constructor(
             PreBufferDataSource(
                 networkDelegate = okHttpFactory.createDataSource(),
                 store = store,
-                activeSlotProvider = { activeSlotKey },
+                activeSlotProvider = { slotKeyOverride ?: activeSlotKey },
+                offlineCachedOnlyProvider = offlineCachedOnlyProvider,
             )
         }
     }
@@ -506,10 +568,7 @@ class PreBufferManager @Inject constructor(
         if (allSegments.isEmpty()) return
 
         val existing = store.readMeta(slotKey)
-        val sameStream = existing != null && (
-            existing.streamUrl == source.url ||
-                existing.streamUrl.substringBefore('?') == source.url.substringBefore('?')
-            )
+        val sameStream = existing != null && PreBufferPolicy.isSameStream(existing.streamUrl, source.url)
         val completed = if (sameStream && existing != null) {
             existing.completedSegmentUrls.toMutableSet()
         } else {
@@ -535,6 +594,8 @@ class PreBufferManager @Inject constructor(
                 serverName = source.serverName,
                 referer = source.referer,
                 origin = source.origin,
+                subtitleUrl = source.subtitleUrl,
+                audioUrl = source.audioUrl,
             )
         )
         _state.value = PreBufferState(
@@ -570,6 +631,8 @@ class PreBufferManager @Inject constructor(
                         serverName = source.serverName,
                         referer = source.referer,
                         origin = source.origin,
+                        subtitleUrl = source.subtitleUrl,
+                        audioUrl = source.audioUrl,
                     )
                 )
                 val fraction = (completed.size.toFloat() / allSegments.size).coerceIn(0f, 1f)
@@ -588,12 +651,13 @@ class PreBufferManager @Inject constructor(
         if (capBytes <= 0L) return
         val partFile = store.mp4PartialFile(slotKey)
         val existingMeta = store.readMeta(slotKey)
-        if (existingMeta != null && existingMeta.streamUrl != source.url) {
+        val sameStream = existingMeta != null && PreBufferPolicy.isSameStream(existingMeta.streamUrl, source.url)
+        if (existingMeta != null && !sameStream) {
             partFile.delete()
         }
 
         var offset = if (partFile.exists()) partFile.length() else 0L
-        var totalLength = existingMeta?.takeIf { it.streamUrl == source.url }?.mp4TotalBytes ?: 0L
+        var totalLength = existingMeta?.takeIf { sameStream }?.mp4TotalBytes ?: 0L
         val alreadyDone = totalLength > 0L && offset >= totalLength
         if (offset > 0L || alreadyDone) {
             val denom = if (totalLength > 0L) totalLength else capBytes
@@ -662,6 +726,12 @@ class PreBufferManager @Inject constructor(
                     mp4BytesBuffered = offset,
                     mp4TotalBytes = totalLength,
                     isComplete = isDone,
+                    qualityLabel = source.qualityLabel,
+                    serverName = source.serverName,
+                    referer = source.referer,
+                    origin = source.origin,
+                    subtitleUrl = source.subtitleUrl,
+                    audioUrl = source.audioUrl,
                 )
             )
             val denom = if (totalLength > 0L) totalLength else capBytes
@@ -737,14 +807,14 @@ class PreBufferManager @Inject constructor(
         return 0L
     }
 
-    private fun fetchString(url: String, referer: String, origin: String): String? {
+    private fun fetchString(url: String, referer: String, origin: String): String? = runCatching {
         val builder = Request.Builder().url(url).get()
         if (referer.isNotBlank()) builder.header("Referer", referer)
         if (origin.isNotBlank()) builder.header("Origin", origin)
-        return okHttpClient.newCall(builder.build()).execute().use { resp ->
+        okHttpClient.newCall(builder.build()).execute().use { resp ->
             if (resp.isSuccessful) resp.body?.string() else null
         }
-    }
+    }.getOrNull()
 
     private fun downloadUrlToFile(url: String, dest: File, referer: String, origin: String): Long {
         val builder = Request.Builder().url(url).get()
@@ -768,9 +838,12 @@ private class PreBufferDataSource(
     private val networkDelegate: DataSource,
     private val store: PreBufferSlotStore,
     private val activeSlotProvider: () -> String?,
+    private val offlineCachedOnlyProvider: () -> Boolean,
 ) : DataSource {
 
     private var fileDelegate: FileDataSource? = null
+    private var memoryDelegate: ByteArrayDataSource? = null
+    private var partialMp4: PartialMp4Reader? = null
     private var activeDelegate: DataSource? = null
     private val transferListeners = mutableListOf<TransferListener>()
 
@@ -785,6 +858,27 @@ private class PreBufferDataSource(
         if (slotKey != null) {
             val playlistFile = store.playlistFile(slotKey, url)
             if (playlistFile.exists() && playlistFile.length() > 0L && dataSpec.position < playlistFile.length()) {
+                if (offlineCachedOnlyProvider()) {
+                    val trimmed = runCatching {
+                        val text = playlistFile.readText(Charsets.UTF_8)
+                        HlsPlaylistParser.trimToCachedPlaylist(
+                            playlistText = text,
+                            baseUrl = url,
+                            isVariantCached = { store.playlistFile(slotKey, it).exists() },
+                            isSegmentCached = {
+                                val f = store.segmentFile(slotKey, it)
+                                f.exists() && f.length() > 0L
+                            },
+                        )
+                    }.getOrNull()
+                    if (!trimmed.isNullOrBlank()) {
+                        val bytes = trimmed.toByteArray(Charsets.UTF_8)
+                        val mem = ByteArrayDataSource(bytes).also { m -> transferListeners.forEach(m::addTransferListener) }
+                        memoryDelegate = mem
+                        activeDelegate = mem
+                        return mem.open(dataSpec)
+                    }
+                }
                 val fs = FileDataSource().also { f -> transferListeners.forEach(f::addTransferListener) }
                 val localSpec = dataSpec.buildUpon().setUri(Uri.fromFile(playlistFile)).build()
                 fileDelegate = fs
@@ -800,14 +894,28 @@ private class PreBufferDataSource(
                 return fs.open(localSpec)
             }
             val meta = store.readMeta(slotKey)
-            if (meta != null && !meta.isHls && meta.isComplete && meta.streamUrl == url) {
+            if (meta != null && !meta.isHls && PreBufferPolicy.isSameStream(meta.streamUrl, url)) {
                 val mp4File = store.mp4PartialFile(slotKey)
                 if (mp4File.exists() && mp4File.length() > 0L) {
-                    val fs = FileDataSource().also { f -> transferListeners.forEach(f::addTransferListener) }
-                    val localSpec = dataSpec.buildUpon().setUri(Uri.fromFile(mp4File)).build()
-                    fileDelegate = fs
-                    activeDelegate = fs
-                    return fs.open(localSpec)
+                    if (meta.isComplete) {
+                        val fs = FileDataSource().also { f -> transferListeners.forEach(f::addTransferListener) }
+                        val localSpec = dataSpec.buildUpon().setUri(Uri.fromFile(mp4File)).build()
+                        fileDelegate = fs
+                        activeDelegate = fs
+                        return fs.open(localSpec)
+                    }
+                    if (dataSpec.position < mp4File.length()) {
+                        val reader = PartialMp4Reader(
+                            mp4File = mp4File,
+                            totalBytes = meta.mp4TotalBytes,
+                            originalSpec = dataSpec,
+                            networkDelegate = networkDelegate,
+                            offlineCachedOnlyProvider = offlineCachedOnlyProvider,
+                        )
+                        partialMp4 = reader
+                        activeDelegate = null
+                        return reader.open()
+                    }
                 }
             }
         }
@@ -816,17 +924,109 @@ private class PreBufferDataSource(
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        partialMp4?.let { return it.read(buffer, offset, length) }
         return activeDelegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
     }
 
-    override fun getUri(): Uri? = activeDelegate?.uri
+    override fun getUri(): Uri? = partialMp4?.uri ?: activeDelegate?.uri
 
     override fun close() {
+        runCatching { partialMp4?.close() }
+        runCatching { memoryDelegate?.close() }
         runCatching { fileDelegate?.close() }
         runCatching {
             if (activeDelegate === networkDelegate) networkDelegate.close()
         }
+        partialMp4 = null
+        memoryDelegate = null
         fileDelegate = null
         activeDelegate = null
+    }
+}
+
+private class PartialMp4Reader(
+    private val mp4File: File,
+    private val totalBytes: Long,
+    private val originalSpec: DataSpec,
+    private val networkDelegate: DataSource,
+    private val offlineCachedOnlyProvider: () -> Boolean,
+) {
+    private var raf: RandomAccessFile? = null
+    private var currentPos: Long = originalSpec.position
+    private var remainingSpecBytes: Long = originalSpec.length
+    private var networkOpened: Boolean = false
+    private var networkExhausted: Boolean = false
+
+    val uri: Uri get() = originalSpec.uri
+
+    fun open(): Long {
+        raf = RandomAccessFile(mp4File, "r").apply { seek(currentPos) }
+        return when {
+            originalSpec.length != C.LENGTH_UNSET.toLong() -> originalSpec.length
+            totalBytes > 0L -> (totalBytes - currentPos).coerceAtLeast(0L)
+            else -> C.LENGTH_UNSET.toLong()
+        }
+    }
+
+    fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        if (remainingSpecBytes == 0L) return C.RESULT_END_OF_INPUT
+        val maxRead = if (remainingSpecBytes != C.LENGTH_UNSET.toLong()) {
+            minOf(length.toLong(), remainingSpecBytes).toInt()
+        } else {
+            length
+        }
+
+        val cachedLen = mp4File.length()
+        if (currentPos < cachedLen) {
+            val fileAvail = (cachedLen - currentPos).coerceAtMost(maxRead.toLong()).toInt()
+            val n = raf?.read(buffer, offset, fileAvail) ?: -1
+            if (n > 0) {
+                currentPos += n
+                if (remainingSpecBytes != C.LENGTH_UNSET.toLong()) remainingSpecBytes -= n
+                return n
+            }
+        }
+
+        if (networkExhausted || offlineCachedOnlyProvider() || (totalBytes > 0L && currentPos >= totalBytes)) {
+            return C.RESULT_END_OF_INPUT
+        }
+
+        if (!networkOpened) {
+            val opened = runCatching {
+                val netSpec = originalSpec.buildUpon()
+                    .setPosition(currentPos)
+                    .setLength(remainingSpecBytes)
+                    .build()
+                networkDelegate.open(netSpec)
+                true
+            }.getOrDefault(false)
+            if (!opened) {
+                networkExhausted = true
+                return C.RESULT_END_OF_INPUT
+            }
+            networkOpened = true
+        }
+
+        return try {
+            val n = networkDelegate.read(buffer, offset, maxRead)
+            if (n > 0) {
+                currentPos += n
+                if (remainingSpecBytes != C.LENGTH_UNSET.toLong()) remainingSpecBytes -= n
+            }
+            n
+        } catch (_: IOException) {
+            networkExhausted = true
+            C.RESULT_END_OF_INPUT
+        }
+    }
+
+    fun close() {
+        runCatching { raf?.close() }
+        raf = null
+        if (networkOpened) {
+            runCatching { networkDelegate.close() }
+            networkOpened = false
+        }
     }
 }
