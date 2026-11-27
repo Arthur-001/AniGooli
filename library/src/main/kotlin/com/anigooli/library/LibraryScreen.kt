@@ -25,11 +25,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,16 +41,21 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -80,6 +83,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -118,6 +122,7 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
 
     var showEditorSheet by remember { mutableStateOf(false) }
+    var showFilterSheet by remember { mutableStateOf(false) }
     var editingEntry by remember { mutableStateOf<AnimeWithGenres?>(null) }
     var showMenu by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -263,14 +268,12 @@ fun LibraryScreen(
                 OfflineListContent(
                     uiState = uiState,
                     onSearchChange = viewModel::setSearchQuery,
-                    onSelectStatus = viewModel::setStatusFilter,
-                    onSelectGenre = viewModel::setGenreFilter,
+                    onOpenFilters = { showFilterSheet = true },
                     onEditEntry = {
                         editingEntry = it
                         showEditorSheet = true
                     },
                     onOpenAniListPage = onNavigateToMedia,
-                    onIncrementEpisode = viewModel::incrementEpisode,
                     bottomPaddingDp = NAV_BAR_CLEARANCE_DP + 64,
                 )
             } else {
@@ -300,8 +303,18 @@ fun LibraryScreen(
                     score = score,
                     notes = notes,
                     genreIds = genreIds,
+                    onResult = { res ->
+                        res.onSuccess {
+                            showEditorSheet = false
+                        }.onFailure { err ->
+                            Toast.makeText(
+                                context,
+                                err.message ?: "Already in your list",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    },
                 )
-                showEditorSheet = false
             },
             onDelete = editingEntry?.let { target ->
                 {
@@ -316,6 +329,18 @@ fun LibraryScreen(
                 }
             },
             onDismiss = { showEditorSheet = false },
+        )
+    }
+
+    if (showFilterSheet) {
+        OfflineListFilterSheet(
+            selectedStatuses = uiState.selectedStatuses,
+            selectedGenreIds = uiState.selectedGenreIds,
+            allGenres = uiState.allGenres,
+            onToggleStatus = viewModel::toggleStatusFilter,
+            onToggleGenre = viewModel::toggleGenreFilter,
+            onClearAll = viewModel::clearFilters,
+            onDismiss = { showFilterSheet = false },
         )
     }
 
@@ -365,68 +390,57 @@ private fun ColumnCountButton(
 private fun OfflineListContent(
     uiState: OfflineListUiState,
     onSearchChange: (String) -> Unit,
-    onSelectStatus: (OfflineWatchStatus?) -> Unit,
-    onSelectGenre: (String?) -> Unit,
+    onOpenFilters: () -> Unit,
     onEditEntry: (AnimeWithGenres) -> Unit,
     onOpenAniListPage: (Int) -> Unit,
-    onIncrementEpisode: (AnimeWithGenres) -> Unit,
     bottomPaddingDp: Int,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = uiState.searchQuery,
-            onValueChange = onSearchChange,
-            placeholder = { Text("Search your offline list...") },
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-            trailingIcon = if (uiState.searchQuery.isNotEmpty()) {
-                {
-                    IconButton(onClick = { onSearchChange("") }) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Clear")
-                    }
-                }
-            } else null,
-            singleLine = true,
-            shape = RoundedCornerShape(28.dp),
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-        )
-
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item {
-                FilterChip(
-                    selected = uiState.selectedStatus == null,
-                    onClick = { onSelectStatus(null) },
-                    label = { Text("All") },
-                )
-            }
-            items(OfflineWatchStatus.entries) { status ->
-                FilterChip(
-                    selected = uiState.selectedStatus == status,
-                    onClick = {
-                        onSelectStatus(if (uiState.selectedStatus == status) null else status)
-                    },
-                    label = { Text(status.displayLabel) },
-                )
-            }
-        }
+            OutlinedTextField(
+                value = uiState.searchQuery,
+                onValueChange = onSearchChange,
+                placeholder = { Text("Search your offline list...") },
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                trailingIcon = if (uiState.searchQuery.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { onSearchChange("") }) {
+                            Icon(Icons.Rounded.Close, contentDescription = "Clear")
+                        }
+                    }
+                } else null,
+                singleLine = true,
+                shape = RoundedCornerShape(28.dp),
+                modifier = Modifier.weight(1f),
+            )
 
-        if (uiState.allGenres.isNotEmpty()) {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            BadgedBox(
+                badge = {
+                    if (uiState.activeFilterCount > 0) {
+                        Badge { Text(uiState.activeFilterCount.toString()) }
+                    }
+                },
             ) {
-                items(uiState.allGenres, key = { it.id }) { genre ->
-                    val isSelected = uiState.selectedGenreId == genre.id
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { onSelectGenre(if (isSelected) null else genre.id) },
-                        label = {
-                            Text(if (genre.isCustom) "${genre.name} ★" else genre.name)
-                        },
+                FilledTonalIconButton(
+                    onClick = onOpenFilters,
+                    colors = if (uiState.activeFilterCount > 0) {
+                        IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    } else {
+                        IconButtonDefaults.filledTonalIconButtonColors()
+                    },
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_filter_list),
+                        contentDescription = "Filter library",
                     )
                 }
             }
@@ -472,9 +486,102 @@ private fun OfflineListContent(
                             }
                         },
                         onEditClick = { onEditEntry(item) },
-                        onPlusOne = { onIncrementEpisode(item) },
                     )
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun OfflineListFilterSheet(
+    selectedStatuses: Set<OfflineWatchStatus>,
+    selectedGenreIds: Set<String>,
+    allGenres: List<GenreEntity>,
+    onToggleStatus: (OfflineWatchStatus) -> Unit,
+    onToggleGenre: (String) -> Unit,
+    onClearAll: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = "Filter Library",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (selectedStatuses.isNotEmpty() || selectedGenreIds.isNotEmpty()) {
+                    TextButton(onClick = onClearAll) {
+                        Text("Clear all")
+                    }
+                }
+            }
+
+            Text("Status", style = MaterialTheme.typography.labelLarge)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                OfflineWatchStatus.entries.forEach { status ->
+                    val isSelected = status in selectedStatuses
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { onToggleStatus(status) },
+                        label = { Text(status.displayLabel) },
+                        leadingIcon = if (isSelected) {
+                            { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        } else null,
+                    )
+                }
+            }
+
+            if (allGenres.isNotEmpty()) {
+                HorizontalDivider()
+                Text("Genres", style = MaterialTheme.typography.labelLarge)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    allGenres.forEach { genre ->
+                        val isSelected = genre.id in selectedGenreIds
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { onToggleGenre(genre.id) },
+                            label = {
+                                Text(if (genre.isCustom) "${genre.name} ★" else genre.name)
+                            },
+                            leadingIcon = if (isSelected) {
+                                { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            } else null,
+                        )
+                    }
+                }
+            }
+
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+            ) {
+                Text("Done")
             }
         }
     }
@@ -487,7 +594,6 @@ private fun OfflineAnimeCard(
     compact: Boolean,
     onClick: () -> Unit,
     onEditClick: () -> Unit,
-    onPlusOne: () -> Unit,
 ) {
     val displayTitle = LibraryViewModel.resolveDisplayTitle(item.anime, language)
     val coverModel: Any? = item.anime.localCoverPath?.let { File(it) } ?: item.anime.coverUrl
@@ -541,25 +647,6 @@ private fun OfflineAnimeCard(
                         modifier = Modifier.padding(6.dp).size(14.dp),
                     )
                 }
-
-                val epLabel = item.anime.totalEpisodes?.let {
-                    "${item.anime.episodesWatched}/$it"
-                } ?: "Ep ${item.anime.episodesWatched}"
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(6.dp)
-                        .clickable(onClick = onPlusOne),
-                ) {
-                    Text(
-                        text = "$epLabel +",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
             }
 
             Column(
@@ -581,11 +668,9 @@ private fun OfflineAnimeCard(
                 )
                 if (!compact && item.genres.isNotEmpty()) {
                     Text(
-                        text = item.genres.take(2).joinToString(", ") { it.name },
+                        text = item.genres.joinToString(", ") { it.name },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

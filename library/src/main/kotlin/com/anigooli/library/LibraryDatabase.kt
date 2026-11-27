@@ -30,9 +30,17 @@ interface LibraryDao {
     @Query("SELECT * FROM offline_anime")
     suspend fun getAllAnimeWithGenresOnce(): List<AnimeWithGenres>
 
+    /** Fetches all offline anime entries once. */
+    @Query("SELECT * FROM offline_anime")
+    suspend fun getAllAnimeOnce(): List<OfflineAnimeEntity>
+
     /** Fetches an offline anime entry by AniList ID if present. */
     @Query("SELECT * FROM offline_anime WHERE anilistId = :anilistId LIMIT 1")
     suspend fun getByAnilistId(anilistId: Int): OfflineAnimeEntity?
+
+    /** Fetches an offline anime entry matching any of [anilistIds]. */
+    @Query("SELECT * FROM offline_anime WHERE anilistId IN (:anilistIds) LIMIT 1")
+    suspend fun getByAnyAnilistId(anilistIds: List<Int>): OfflineAnimeEntity?
 
     /** Fetches an offline anime entry by local UUID if present. */
     @Query("SELECT * FROM offline_anime WHERE localId = :localId LIMIT 1")
@@ -143,11 +151,12 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertReleaseTracker(tracker: ReleaseTrackerEntity)
 
-    /** Fetches all distinct AniList IDs from offline anime list and watch history for release checks. */
-    @Query(
-        "SELECT anilistId FROM offline_anime WHERE anilistId IS NOT NULL AND anilistId > 0 " +
-            "UNION SELECT anilistId FROM watch_history WHERE anilistId > 0"
-    )
+    /** Deletes release tracker snapshot for [anilistId] when removed from My List. */
+    @Query("DELETE FROM release_tracker WHERE anilistId = :anilistId")
+    suspend fun deleteReleaseTracker(anilistId: Int)
+
+    /** Fetches all distinct AniList IDs currently in the offline anime list for release checks. */
+    @Query("SELECT DISTINCT anilistId FROM offline_anime WHERE anilistId IS NOT NULL AND anilistId > 0")
     suspend fun getAllTrackedAnilistIds(): List<Int>
 
     // endregion

@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
 import com.anigooli.downloads.DownloadEpisodeEntity
 import com.anigooli.downloads.DownloadRepository
+import com.anigooli.library.AnimeTitleNormalizer
 import com.anigooli.library.LibraryRepository
 import com.anigooli.streaming.AudioTrack
 import com.anigooli.streaming.CensorshipVersion
@@ -114,10 +115,6 @@ class MediaPageViewModel @Inject constructor(
         .map { it == MANGA_SORT_NEWEST_FIRST }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), false)
 
-    /** True when this entry is currently saved in the user's Offline Personal Anime List. */
-    val isInOfflineList: StateFlow<Boolean> = libraryRepository.observeIsInList(navArgs.id)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), false)
-
     /** Remembered audio track for this specific anime (falls back to Global Settings default: Japanese). */
     val audioTrack: StateFlow<AudioTrack> = combine(
         libraryRepository.observePlaybackPrefs(navArgs.id),
@@ -191,6 +188,29 @@ class MediaPageViewModel @Inject constructor(
     /** Multi-hop organized franchise sections (Main Seasons & Movies, OVAs, Mangas). */
     val franchise: StateFlow<OrganizedFranchise?> = _franchise.asStateFlow()
 
+    /** True when this entry or any related season/OVA/movie/manga in its franchise is in My List. */
+    val isInOfflineList: StateFlow<Boolean> = combine(
+        libraryRepository.observeAllAnime(),
+        media,
+        franchise,
+    ) { entries, mediaRes, orgFranchise ->
+        val currentMedia = mediaRes.data
+        val relatedIds = collectRelatedAnilistIds(currentMedia, orgFranchise)
+        val currentTitles = listOfNotNull(
+            currentMedia?.englishTitle,
+            currentMedia?.romajiTitle,
+            currentMedia?.nativeTitle,
+            currentMedia?.title,
+        )
+        entries.any { item ->
+            (item.anime.anilistId != null && item.anime.anilistId in relatedIds) ||
+                AnimeTitleNormalizer.titlesMatch(
+                    listOf(item.anime.titleEnglish, item.anime.titleRomaji, item.anime.titleNative),
+                    currentTitles,
+                )
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), false)
+
     private val _streamingState = MutableStateFlow(StreamingEpisodesUiState())
     /** Resolved streaming episode list and busy/error state. */
     val streamingState: StateFlow<StreamingEpisodesUiState> = _streamingState.asStateFlow()
@@ -238,12 +258,23 @@ class MediaPageViewModel @Inject constructor(
         preferencesRepository.setMangaRelationsSortOrder(next)
     }
 
-    /** Adds or removes this entry from the Offline Personal Anime List. */
+    /** Adds or removes this entry (or its whole franchise entry) from the Offline Personal Anime List. */
     fun toggleOfflineList() {
         val currentMedia = media.value.data ?: return
+        val relatedIds = collectRelatedAnilistIds(currentMedia, _franchise.value)
+        val candidateTitles = listOf(
+            currentMedia.englishTitle,
+            currentMedia.romajiTitle,
+            currentMedia.nativeTitle,
+            currentMedia.title,
+        )
         viewModelScope.launch {
             if (isInOfflineList.value) {
-                libraryRepository.removeByAnilistId(currentMedia.id)
+                libraryRepository.removeByAnilistId(
+                    anilistId = currentMedia.id,
+                    relatedAnilistIds = relatedIds,
+                    titles = candidateTitles,
+                )
             } else {
                 libraryRepository.addOrUpdateFromAnilist(
                     anilistId = currentMedia.id,
@@ -253,9 +284,28 @@ class MediaPageViewModel @Inject constructor(
                     coverUrl = currentMedia.coverImage,
                     totalEpisodes = currentMedia.totalEpisodes,
                     genreNames = currentMedia.genres,
+                    relatedAnilistIds = relatedIds,
                 )
             }
         }
+    }
+
+    private fun collectRelatedAnilistIds(
+        currentMedia: Media?,
+        orgFranchise: OrganizedFranchise?,
+    ): Set<Int> {
+        val ids = LinkedHashSet<Int>()
+        ids.add(navArgs.id)
+        if (currentMedia != null) {
+            ids.add(currentMedia.id)
+            currentMedia.relations.forEach { (_, related) -> ids.add(related.id) }
+        }
+        if (orgFranchise != null) {
+            orgFranchise.mainSeasonsAndMovies.forEach { ids.add(it.media.id) }
+            orgFranchise.ovasAndSpecials.forEach { ids.add(it.media.id) }
+            orgFranchise.mangas.forEach { ids.add(it.media.id) }
+        }
+        return ids
     }
 
     /** Updates and saves the audio track (`JAPANESE` or `ENGLISH_DUB`) specifically for this anime. */

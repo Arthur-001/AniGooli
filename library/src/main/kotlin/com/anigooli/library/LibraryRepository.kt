@@ -66,7 +66,10 @@ class LibraryRepository @Inject constructor(
         )
     }
 
-    /** Adds or updates an anime from an AniList detail page into the local offline list. */
+    /**
+     * Adds an anime from an AniList detail page into the local offline list using its whole-series
+     * base title. Prevents duplicates across related seasons, OVAs, movies, manga, or matching titles.
+     */
     suspend fun addOrUpdateFromAnilist(
         anilistId: Int,
         titleEnglish: String?,
@@ -76,42 +79,97 @@ class LibraryRepository @Inject constructor(
         totalEpisodes: Int?,
         genreNames: List<String>,
         status: OfflineWatchStatus = OfflineWatchStatus.PLAN_TO_WATCH,
+        relatedAnilistIds: Set<Int> = emptySet(),
     ) = withContext(Dispatchers.IO) {
         ensureDefaultGenresSeeded()
+        val normalizedEnglish = AnimeTitleNormalizer.displayWholeTitle(titleEnglish)
+        val normalizedRomaji = AnimeTitleNormalizer.displayWholeTitle(titleRomaji)
+        val candidateTitles = listOf(titleEnglish, titleRomaji, titleNative, normalizedEnglish, normalizedRomaji)
+
+        val existing = findMatchingOfflineAnime(
+            anilistId = anilistId,
+            relatedAnilistIds = relatedAnilistIds,
+            titles = candidateTitles,
+        )
+        if (existing != null) {
+            return@withContext
+        }
+
         val now = System.currentTimeMillis()
-        val existing = dao.getByAnilistId(anilistId)
-        val localId = existing?.localId ?: UUID.randomUUID().toString()
+        val localId = UUID.randomUUID().toString()
         val entity = OfflineAnimeEntity(
             localId = localId,
             anilistId = anilistId,
-            titleEnglish = titleEnglish ?: existing?.titleEnglish,
-            titleRomaji = titleRomaji ?: existing?.titleRomaji,
-            titleNative = titleNative ?: existing?.titleNative,
-            coverUrl = coverUrl ?: existing?.coverUrl,
-            localCoverPath = existing?.localCoverPath,
-            status = existing?.status ?: status.name,
-            episodesWatched = existing?.episodesWatched ?: 0,
-            totalEpisodes = totalEpisodes ?: existing?.totalEpisodes,
-            score = existing?.score,
-            notes = existing?.notes.orEmpty(),
-            createdAt = existing?.createdAt ?: now,
+            titleEnglish = normalizedEnglish,
+            titleRomaji = normalizedRomaji,
+            titleNative = titleNative?.trim()?.takeIf { it.isNotEmpty() },
+            coverUrl = coverUrl,
+            localCoverPath = null,
+            status = status.name,
+            episodesWatched = 0,
+            totalEpisodes = totalEpisodes,
+            score = null,
+            notes = "",
+            createdAt = now,
             updatedAt = now,
         )
         database.withTransaction {
             dao.upsertAnime(entity)
-            if (existing == null) {
-                val genreIds = resolveOrCreateGenreIds(genreNames, allowCreateCustom = false)
-                dao.setGenresForAnime(localId, genreIds)
-            }
+            val genreIds = resolveOrCreateGenreIds(genreNames, allowCreateCustom = false)
+            dao.setGenresForAnime(localId, genreIds)
         }
     }
 
-    /** Removes an AniList-linked anime from the offline personal list. */
-    suspend fun removeByAnilistId(anilistId: Int) = withContext(Dispatchers.IO) {
-        dao.deleteByAnilistId(anilistId)
+    /**
+     * Removes an AniList-linked anime (or its matching franchise entry) from the offline personal list
+     * and cleans up its release notification tracker so notifications stay strictly synced with My List.
+     */
+    suspend fun removeByAnilistId(
+        anilistId: Int,
+        relatedAnilistIds: Set<Int> = emptySet(),
+        titles: List<String?> = emptyList(),
+    ) = withContext(Dispatchers.IO) {
+        val matched = findMatchingOfflineAnime(
+            anilistId = anilistId,
+            relatedAnilistIds = relatedAnilistIds,
+            titles = titles,
+        )
+        if (matched != null) {
+            dao.deleteAnime(matched.localId)
+            matched.anilistId?.let { dao.deleteReleaseTracker(it) }
+        } else {
+            dao.deleteByAnilistId(anilistId)
+            dao.deleteReleaseTracker(anilistId)
+        }
     }
 
-    /** Saves a manual or edited offline anime entry along with its assigned genres atomically. */
+    private suspend fun findMatchingOfflineAnime(
+        anilistId: Int?,
+        relatedAnilistIds: Set<Int>,
+        titles: List<String?>,
+    ): OfflineAnimeEntity? {
+        if (anilistId != null) {
+            dao.getByAnilistId(anilistId)?.let { return it }
+        }
+        val lookupIds = (relatedAnilistIds + listOfNotNull(anilistId)).filter { it > 0 }.distinct()
+        if (lookupIds.isNotEmpty()) {
+            dao.getByAnyAnilistId(lookupIds)?.let { return it }
+        }
+        if (titles.any { !it.isNullOrBlank() }) {
+            return dao.getAllAnimeOnce().firstOrNull { entry ->
+                AnimeTitleNormalizer.titlesMatch(
+                    listOf(entry.titleEnglish, entry.titleRomaji, entry.titleNative),
+                    titles,
+                )
+            }
+        }
+        return null
+    }
+
+    /**
+     * Saves a manual or edited offline anime entry along with its assigned genres atomically,
+     * normalizing the title to the whole anime name and rejecting duplicates.
+     */
     suspend fun saveOfflineAnime(
         localId: String?,
         anilistId: Int?,
@@ -125,16 +183,33 @@ class LibraryRepository @Inject constructor(
         score: Float?,
         notes: String,
         genreIds: List<String>,
-    ) = withContext(Dispatchers.IO) {
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         ensureDefaultGenresSeeded()
-        val now = System.currentTimeMillis()
+        val normalizedEnglish = AnimeTitleNormalizer.displayWholeTitle(titleEnglish)
+        val normalizedRomaji = AnimeTitleNormalizer.displayWholeTitle(titleRomaji)
+        val candidateTitles = listOf(titleEnglish, titleRomaji, titleNative, normalizedEnglish, normalizedRomaji)
+
         val existing = localId?.let { dao.getByLocalId(it) }
+        val duplicate = dao.getAllAnimeOnce().firstOrNull { entry ->
+            if (existing != null && entry.localId == existing.localId) return@firstOrNull false
+            (anilistId != null && entry.anilistId == anilistId) ||
+                AnimeTitleNormalizer.titlesMatch(
+                    listOf(entry.titleEnglish, entry.titleRomaji, entry.titleNative),
+                    candidateTitles,
+                )
+        }
+        if (duplicate != null) {
+            val dupName = duplicate.titleEnglish ?: duplicate.titleRomaji ?: "This anime"
+            return@withContext Result.failure(IllegalStateException("\"$dupName\" is already in your list"))
+        }
+
+        val now = System.currentTimeMillis()
         val resolvedId = existing?.localId ?: UUID.randomUUID().toString()
         val entity = OfflineAnimeEntity(
             localId = resolvedId,
             anilistId = anilistId ?: existing?.anilistId,
-            titleEnglish = titleEnglish?.trim()?.takeIf { it.isNotEmpty() },
-            titleRomaji = titleRomaji?.trim()?.takeIf { it.isNotEmpty() },
+            titleEnglish = normalizedEnglish,
+            titleRomaji = normalizedRomaji,
             titleNative = titleNative?.trim()?.takeIf { it.isNotEmpty() },
             coverUrl = coverUrl?.trim()?.takeIf { it.isNotEmpty() },
             localCoverPath = existing?.localCoverPath,
@@ -150,11 +225,14 @@ class LibraryRepository @Inject constructor(
             dao.upsertAnime(entity)
             dao.setGenresForAnime(resolvedId, genreIds)
         }
+        Result.success(Unit)
     }
 
-    /** Deletes an offline anime entry by [localId]. */
+    /** Deletes an offline anime entry by [localId] and removes its release notification tracker. */
     suspend fun deleteOfflineAnime(localId: String) = withContext(Dispatchers.IO) {
+        val existing = dao.getByLocalId(localId)
         dao.deleteAnime(localId)
+        existing?.anilistId?.let { dao.deleteReleaseTracker(it) }
     }
 
     /** Creates a new user-defined custom genre if the name does not collide with an existing genre. */

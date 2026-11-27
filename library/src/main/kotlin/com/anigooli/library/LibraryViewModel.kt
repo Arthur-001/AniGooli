@@ -46,13 +46,16 @@ data class OfflineListUiState(
     val titleLanguage: Media.Language = Media.Language.ENGLISH,
     /** Current offline search query. */
     val searchQuery: String = "",
-    /** Selected status filter, or null for all statuses. */
-    val selectedStatus: OfflineWatchStatus? = null,
-    /** Selected genre ID filter, or null for all genres. */
-    val selectedGenreId: String? = null,
+    /** Selected status filters (empty means all statuses). */
+    val selectedStatuses: Set<OfflineWatchStatus> = emptySet(),
+    /** Selected genre ID filters (empty means all genres). */
+    val selectedGenreIds: Set<String> = emptySet(),
     /** Selected sort order. */
     val sort: OfflineListSort = OfflineListSort.RECENTLY_UPDATED,
-)
+) {
+    /** Total number of active status and genre filters. */
+    val activeFilterCount: Int get() = selectedStatuses.size + selectedGenreIds.size
+}
 
 /** ViewModel backing [LibraryScreen], [GenreManagerScreen], and [ConflictResolutionScreen]. */
 @HiltViewModel
@@ -64,8 +67,8 @@ class LibraryViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val searchQuery = MutableStateFlow("")
-    private val selectedStatus = MutableStateFlow<OfflineWatchStatus?>(null)
-    private val selectedGenreId = MutableStateFlow<String?>(null)
+    private val selectedStatuses = MutableStateFlow<Set<OfflineWatchStatus>>(emptySet())
+    private val selectedGenreIds = MutableStateFlow<Set<String>>(emptySet())
     private val sortMode = MutableStateFlow(OfflineListSort.RECENTLY_UPDATED)
 
     /** Summary of the most recent import/restore operation, or null when dismissed. */
@@ -84,7 +87,7 @@ class LibraryViewModel @Inject constructor(
         repository.observeAllGenres(),
         preferencesRepository.personalListColumns.filterNotNull(),
         preferencesRepository.language.filterNotNull().map { Media.Language.safeValueOf(it) },
-        combine(searchQuery, selectedStatus, selectedGenreId, sortMode) { q, s, g, sort ->
+        combine(searchQuery, selectedStatuses, selectedGenreIds, sortMode) { q, s, g, sort ->
             FilterParams(q, s, g, sort)
         },
     ) { entries, genres, cols, lang, filter ->
@@ -100,8 +103,10 @@ class LibraryViewModel @Inject constructor(
                     item.anime.notes,
                 ).any { it.contains(q, ignoreCase = true) }
             }
-            val statusMatch = filter.status == null || item.anime.status == filter.status.name
-            val genreMatch = filter.genreId == null || item.genres.any { it.id == filter.genreId }
+            val statusMatch = filter.statuses.isEmpty() ||
+                OfflineWatchStatus.safeParse(item.anime.status) in filter.statuses
+            val genreMatch = filter.genreIds.isEmpty() ||
+                item.genres.any { it.id in filter.genreIds }
             titleMatch && statusMatch && genreMatch
         }
         val sorted = when (filter.sort) {
@@ -116,8 +121,8 @@ class LibraryViewModel @Inject constructor(
             columns = cols.coerceIn(2, 4),
             titleLanguage = lang,
             searchQuery = filter.query,
-            selectedStatus = filter.status,
-            selectedGenreId = filter.genreId,
+            selectedStatuses = filter.statuses,
+            selectedGenreIds = filter.genreIds,
             sort = filter.sort,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), OfflineListUiState())
@@ -133,14 +138,22 @@ class LibraryViewModel @Inject constructor(
         searchQuery.value = query
     }
 
-    /** Updates watch status filter. */
-    fun setStatusFilter(status: OfflineWatchStatus?) {
-        selectedStatus.value = status
+    /** Toggles a watch status in the multi-select status filter. */
+    fun toggleStatusFilter(status: OfflineWatchStatus) {
+        val current = selectedStatuses.value
+        selectedStatuses.value = if (status in current) current - status else current + status
     }
 
-    /** Updates genre ID filter. */
-    fun setGenreFilter(genreId: String?) {
-        selectedGenreId.value = genreId
+    /** Toggles a genre ID in the multi-select genre filter. */
+    fun toggleGenreFilter(genreId: String) {
+        val current = selectedGenreIds.value
+        selectedGenreIds.value = if (genreId in current) current - genreId else current + genreId
+    }
+
+    /** Clears all active status and genre filters. */
+    fun clearFilters() {
+        selectedStatuses.value = emptySet()
+        selectedGenreIds.value = emptySet()
     }
 
     /** Updates sort mode. */
@@ -167,8 +180,9 @@ class LibraryViewModel @Inject constructor(
         score: Float?,
         notes: String,
         genreIds: List<String>,
+        onResult: (Result<Unit>) -> Unit = {},
     ) = viewModelScope.launch {
-        repository.saveOfflineAnime(
+        val result = repository.saveOfflineAnime(
             localId = localId,
             anilistId = anilistId,
             titleEnglish = titleEnglish,
@@ -182,35 +196,7 @@ class LibraryViewModel @Inject constructor(
             notes = notes,
             genreIds = genreIds,
         )
-    }
-
-    /** Increments watched episode progress by 1 cleanly. */
-    fun incrementEpisode(entry: AnimeWithGenres) = viewModelScope.launch {
-        val total = entry.anime.totalEpisodes
-        val next = if (total != null) {
-            (entry.anime.episodesWatched + 1).coerceAtMost(total)
-        } else {
-            entry.anime.episodesWatched + 1
-        }
-        val nextStatus = if (total != null && next >= total) {
-            OfflineWatchStatus.COMPLETED
-        } else {
-            OfflineWatchStatus.safeParse(entry.anime.status)
-        }
-        repository.saveOfflineAnime(
-            localId = entry.anime.localId,
-            anilistId = entry.anime.anilistId,
-            titleEnglish = entry.anime.titleEnglish,
-            titleRomaji = entry.anime.titleRomaji,
-            titleNative = entry.anime.titleNative,
-            coverUrl = entry.anime.coverUrl,
-            status = nextStatus,
-            episodesWatched = next,
-            totalEpisodes = total,
-            score = entry.anime.score,
-            notes = entry.anime.notes,
-            genreIds = entry.genres.map { it.id },
-        )
+        onResult(result)
     }
 
     /** Deletes an anime from the offline list. */
@@ -335,7 +321,7 @@ class LibraryViewModel @Inject constructor(
 
 private data class FilterParams(
     val query: String,
-    val status: OfflineWatchStatus?,
-    val genreId: String?,
+    val statuses: Set<OfflineWatchStatus>,
+    val genreIds: Set<String>,
     val sort: OfflineListSort,
 )
