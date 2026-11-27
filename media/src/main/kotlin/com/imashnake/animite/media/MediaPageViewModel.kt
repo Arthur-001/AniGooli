@@ -529,6 +529,7 @@ class MediaPageViewModel @Inject constructor(
                         allEpisodes = allEps,
                         bundle = EpisodeStreamBundle(
                             episode = episode,
+                            requestedAudioTrack = audioTrack.value,
                             actualAudioTrack = audioTrack.value,
                             isDubFallback = false,
                             sources = listOf(cachedSource),
