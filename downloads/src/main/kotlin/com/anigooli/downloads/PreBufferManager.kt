@@ -358,12 +358,13 @@ class PreBufferManager @Inject constructor(
     fun findCachedSourceForEpisode(anilistId: Int, episode: String): StreamSource? {
         val (_, meta) = store.findCachedSlot(anilistId, episode) ?: return null
         return StreamSource(
-            url = meta.streamUrl,
             qualityLabel = meta.qualityLabel.ifBlank { "Cached" },
+            height = 0,
             serverName = meta.serverName.ifBlank { "Pre-buffered" },
-            isHls = meta.isHls,
+            url = meta.streamUrl,
             referer = meta.referer,
             origin = meta.origin,
+            isHls = meta.isHls,
         )
     }
 
