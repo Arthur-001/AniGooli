@@ -63,8 +63,12 @@ data class StreamingEpisodesUiState(
     val providerId: String? = null,
     /** Available uncensored/censored provider entries when resolved. */
     val availableVersions: ResolvedAnimeVersions? = null,
-    /** Available episode strings (e.g. ["1", "2", ...]). */
-    val episodes: List<String> = emptyList(),
+    /** Available Japanese / subbed episode strings (e.g. ["1", "2", ...]). */
+    val subEpisodes: List<String> = emptyList(),
+    /** Available English dubbed episode strings (empty if no dub exists). */
+    val dubEpisodes: List<String> = emptyList(),
+    /** True once English dub availability/count has been checked for the loaded provider. */
+    val dubChecked: Boolean = false,
     /** Optional episode title map keyed by episode number string. */
     val episodeTitles: Map<String, String> = emptyMap(),
     /** Episode currently being resolved to launch playback/download. */
@@ -73,7 +77,13 @@ data class StreamingEpisodesUiState(
     val errorMessage: String? = null,
     /** Transient status message (e.g. download started or MPV missing fallback). */
     val statusMessage: String? = null,
-)
+) {
+    /** Returns the cached episode list for [audioTrack] without triggering a network reload. */
+    fun episodesFor(audioTrack: AudioTrack): List<String> = when (audioTrack) {
+        AudioTrack.JAPANESE -> subEpisodes
+        AudioTrack.ENGLISH_DUB -> dubEpisodes
+    }
+}
 
 /** ViewModel backing [MediaPage], franchise resolution, offline list toggle, and episode streaming/downloads. */
 @HiltViewModel
@@ -148,6 +158,10 @@ class MediaPageViewModel @Inject constructor(
     val lastWatchedEpisode: StateFlow<String?> = libraryRepository.observePlaybackPrefs(navArgs.id)
         .map { it?.lastEpisode }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), null)
+
+    /** Set of all episode numbers watched for this anime, persisted in local storage and memory. */
+    val watchedEpisodes: StateFlow<Set<String>> = libraryRepository.observeWatchedEpisodes(navArgs.id)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptySet())
 
     /** Active and completed downloads mapped by episode number for quick inline status indicators. */
     val downloadsByEpisode: StateFlow<Map<String, DownloadEpisodeEntity>> =
@@ -317,15 +331,6 @@ class MediaPageViewModel @Inject constructor(
         )
     }
 
-    /** Updates and saves the English subtitles toggle specifically for this anime. */
-    fun setAnimeSubtitlesEnabled(enabled: Boolean) = viewModelScope.launch {
-        libraryRepository.savePlaybackPrefs(
-            anilistId = navArgs.id,
-            audioTrack = audioTrack.value.name,
-            subtitlesEnabled = enabled,
-        )
-    }
-
     /** Toggles whether episode names are displayed alongside episode numbers and persists the choice. */
     fun toggleShowEpisodeNames() = viewModelScope.launch {
         val next = !showEpisodeNames.value
@@ -347,13 +352,15 @@ class MediaPageViewModel @Inject constructor(
         val targetProvider = versions.providerFor(version)
         if (targetProvider.providerId != _streamingState.value.providerId) {
             _streamingState.update { it.copy(isLoading = true, errorMessage = null) }
-            val episodesRes = streamingRepository.fetchEpisodes(targetProvider.providerId)
-            episodesRes.onSuccess { eps ->
+            val episodesRes = streamingRepository.fetchEpisodesByTrack(targetProvider.providerId)
+            episodesRes.onSuccess { epData ->
                 _streamingState.update {
                     it.copy(
                         isLoading = false,
                         providerId = targetProvider.providerId,
-                        episodes = eps,
+                        subEpisodes = epData.subEpisodes,
+                        dubEpisodes = epData.dubEpisodes,
+                        dubChecked = epData.dubChecked,
                     )
                 }
             }.onFailure { err ->
@@ -365,6 +372,15 @@ class MediaPageViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    /** Manually toggles whether [episode] is marked watched in local storage and memory. */
+    fun toggleEpisodeWatched(episode: String) = viewModelScope.launch {
+        if (episode in watchedEpisodes.value) {
+            libraryRepository.unmarkEpisodeWatched(navArgs.id, episode)
+        } else {
+            libraryRepository.markEpisodeWatched(navArgs.id, episode)
         }
     }
 
@@ -391,7 +407,7 @@ class MediaPageViewModel @Inject constructor(
     fun watchEpisode(episode: String, forceMpv: Boolean = false) {
         val currentMedia = media.value.data ?: return
         val providerId = _streamingState.value.providerId ?: return
-        val allEps = _streamingState.value.episodes
+        val allEps = _streamingState.value.episodesFor(audioTrack.value)
         val existingDownload = downloadsByEpisode.value[episode]
         val localPath = existingDownload?.videoFilePath
         if (localPath != null && existingDownload.status == "COMPLETED") {
@@ -597,14 +613,16 @@ class MediaPageViewModel @Inject constructor(
         val preferredVersion = CensorshipVersion.safeValueOf(effectivePrefs.censorshipVersion)
         val selectedProvider = versions.providerFor(preferredVersion)
 
-        val episodesRes = streamingRepository.fetchEpisodes(selectedProvider.providerId)
-        episodesRes.onSuccess { eps ->
+        val episodesRes = streamingRepository.fetchEpisodesByTrack(selectedProvider.providerId)
+        episodesRes.onSuccess { epData ->
             _streamingState.update {
                 it.copy(
                     isLoading = false,
                     providerId = selectedProvider.providerId,
                     availableVersions = versions,
-                    episodes = eps,
+                    subEpisodes = epData.subEpisodes,
+                    dubEpisodes = epData.dubEpisodes,
+                    dubChecked = epData.dubChecked,
                 )
             }
             if (showEpisodeNames.value) {

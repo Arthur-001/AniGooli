@@ -211,10 +211,10 @@ fun MediaPage(
     val isInOfflineList by viewModel.isInOfflineList.collectAsState()
     val streamingState by viewModel.streamingState.collectAsState()
     val audioTrack by viewModel.audioTrack.collectAsState()
-    val subtitlesEnabled by viewModel.subtitlesEnabled.collectAsState()
     val showEpisodeNames by viewModel.showEpisodeNames.collectAsState()
     val censorshipVersion by viewModel.censorshipVersion.collectAsState()
     val lastWatchedEpisode by viewModel.lastWatchedEpisode.collectAsState()
+    val watchedEpisodes by viewModel.watchedEpisodes.collectAsState()
     val downloadsByEpisode by viewModel.downloadsByEpisode.collectAsState()
 
     var showDetailsSheet by remember { mutableStateOf(false) }
@@ -326,17 +326,17 @@ fun MediaPage(
                                                 MediaStreamingSection(
                                                     streamingState = streamingState,
                                                     audioTrack = audioTrack,
-                                                    subtitlesEnabled = subtitlesEnabled,
                                                     showEpisodeNames = showEpisodeNames,
                                                     censorshipVersion = censorshipVersion,
                                                     lastWatchedEpisode = lastWatchedEpisode,
+                                                    watchedEpisodes = watchedEpisodes,
                                                     downloadsByEpisode = downloadsByEpisode,
                                                     onSelectAudio = viewModel::setAnimeAudioTrack,
-                                                    onToggleSubtitles = viewModel::setAnimeSubtitlesEnabled,
                                                     onToggleShowEpisodeNames = viewModel::toggleShowEpisodeNames,
                                                     onSelectCensorshipVersion = viewModel::setCensorshipVersion,
                                                     onLoadEpisodeNamesForNumber = viewModel::loadEpisodeNamesForEpisode,
                                                     onWatchEpisode = viewModel::watchEpisode,
+                                                    onToggleEpisodeWatched = viewModel::toggleEpisodeWatched,
                                                     onDownloadEpisode = viewModel::downloadEpisode,
                                                     onPauseDownload = viewModel::pauseDownload,
                                                     onResumeDownload = viewModel::resumeDownload,

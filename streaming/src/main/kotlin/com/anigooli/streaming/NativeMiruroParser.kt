@@ -59,6 +59,9 @@ object NativeMiruroParser {
     private val extIdsRegex = Regex(""""?external_ids"?\s*:\s*\{""")
     private val titleBlockRegex = Regex(""""?title"?\s*:\s*\{""")
     private val episodeNumRegex = Regex("""(?:[,{;]"?number"?\s*:|\.number\s*=)\s*(\d+(?:\.\d+)?)""")
+    private val episodeCountsBlockRegex = Regex(""""?episodeCounts"?\s*:\s*\{([^}]*)\}""")
+    private val dubCountInBlockRegex = Regex("""(?:^|[,\s])"?dub"?\s*:\s*(null|\d+)""")
+    private val dubAriaLabelRegex = Regex("""aria-label="(\d+)\s+dubbed\s+episodes"""", RegexOption.IGNORE_CASE)
     private val tracksMarkerRegex = Regex(""""?tracks"?\s*:\s*\[""")
     private val subArrayRegex = Regex(""""?subtitles"?\s*:\s*\[""")
     private val subVarRegex = Regex(""""?subtitles"?\s*:\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*[,}]""")
@@ -129,6 +132,31 @@ object NativeMiruroParser {
         val seen = LinkedHashSet<String>()
         episodeNumRegex.findAll(html).forEach { seen.add(it.groupValues[1]) }
         return seen.sortedBy { it.toDoubleOrNull() ?: Double.MAX_VALUE }
+    }
+
+    /**
+     * Parses the number of English-dubbed episodes from a miruro watch page.
+     * Returns `0` when `episodeCounts` explicitly reports `dub: null` or `dub: 0`,
+     * or `null` when dub metadata is not present in the HTML.
+     */
+    fun parseDubEpisodeCount(html: String): Int? {
+        val block = episodeCountsBlockRegex.find(html)?.groupValues?.getOrNull(1)
+        if (block != null) {
+            val dubVal = dubCountInBlockRegex.find(block)?.groupValues?.getOrNull(1)
+            return when {
+                dubVal == null || dubVal == "null" -> 0
+                else -> dubVal.toIntOrNull() ?: 0
+            }
+        }
+        return dubAriaLabelRegex.find(html)?.groupValues?.getOrNull(1)?.toIntOrNull()
+    }
+
+    /** Filters [subEpisodes] to the first [dubCount] dubbed episodes when [dubCount] is known. */
+    fun resolveDubEpisodes(subEpisodes: List<String>, dubCount: Int?): List<String> = when {
+        dubCount == null -> subEpisodes
+        dubCount <= 0 -> emptyList()
+        dubCount >= subEpisodes.size -> subEpisodes
+        else -> subEpisodes.take(dubCount)
     }
 
     /** Parses candidate stream URLs and subtitle links from a miruro episode page. */

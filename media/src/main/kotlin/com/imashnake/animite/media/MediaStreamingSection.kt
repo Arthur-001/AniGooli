@@ -100,17 +100,17 @@ internal fun OfflineListActionRow(
 internal fun MediaStreamingSection(
     streamingState: StreamingEpisodesUiState,
     audioTrack: AudioTrack,
-    subtitlesEnabled: Boolean,
     showEpisodeNames: Boolean,
     censorshipVersion: CensorshipVersion,
     lastWatchedEpisode: String?,
+    watchedEpisodes: Set<String>,
     downloadsByEpisode: Map<String, DownloadEpisodeEntity>,
     onSelectAudio: (AudioTrack) -> Unit,
-    onToggleSubtitles: (Boolean) -> Unit,
     onToggleShowEpisodeNames: () -> Unit,
     onSelectCensorshipVersion: (CensorshipVersion) -> Unit,
     onLoadEpisodeNamesForNumber: (Int) -> Unit,
     onWatchEpisode: (String, Boolean) -> Unit,
+    onToggleEpisodeWatched: (String) -> Unit,
     onDownloadEpisode: (String) -> Unit,
     onPauseDownload: (String) -> Unit,
     onResumeDownload: (String) -> Unit,
@@ -118,6 +118,9 @@ internal fun MediaStreamingSection(
     modifier: Modifier = Modifier,
 ) {
     var selectedEpisodeForSheet by remember { mutableStateOf<String?>(null) }
+    val activeEpisodes = remember(streamingState, audioTrack) {
+        streamingState.episodesFor(audioTrack)
+    }
 
     Column(
         verticalArrangement = Arrangement.spacedBy(LocalPaddings.current.small),
@@ -129,7 +132,7 @@ internal fun MediaStreamingSection(
             style = MaterialTheme.typography.titleMedium,
         )
 
-        // Per-anime Audio, Subtitle, Version & Episode Names memory chips
+        // Per-anime Audio, Version & Episode Names memory chips
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -137,17 +140,26 @@ internal fun MediaStreamingSection(
             FilterChip(
                 selected = audioTrack == AudioTrack.JAPANESE,
                 onClick = { onSelectAudio(AudioTrack.JAPANESE) },
-                label = { Text("Japanese") },
+                label = {
+                    val label = if (streamingState.subEpisodes.isNotEmpty()) {
+                        "Japanese (${streamingState.subEpisodes.size})"
+                    } else {
+                        "Japanese"
+                    }
+                    Text(label)
+                },
             )
             FilterChip(
                 selected = audioTrack == AudioTrack.ENGLISH_DUB,
                 onClick = { onSelectAudio(AudioTrack.ENGLISH_DUB) },
-                label = { Text("English Dub") },
-            )
-            FilterChip(
-                selected = subtitlesEnabled,
-                onClick = { onToggleSubtitles(!subtitlesEnabled) },
-                label = { Text(if (subtitlesEnabled) "EN Sub ON" else "EN Sub OFF") },
+                label = {
+                    val label = if (streamingState.dubChecked && streamingState.subEpisodes.isNotEmpty()) {
+                        "English Dub (${streamingState.dubEpisodes.size})"
+                    } else {
+                        "English Dub"
+                    }
+                    Text(label)
+                },
             )
             if (streamingState.availableVersions?.hasMultipleVersions == true) {
                 FilterChip(
@@ -201,8 +213,18 @@ internal fun MediaStreamingSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else if (streamingState.episodes.isNotEmpty()) {
-            val episodes = streamingState.episodes
+        } else if (
+            audioTrack == AudioTrack.ENGLISH_DUB &&
+            streamingState.dubEpisodes.isEmpty() &&
+            streamingState.subEpisodes.isNotEmpty()
+        ) {
+            Text(
+                text = "No English dubbed episodes available for this anime.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (activeEpisodes.isNotEmpty()) {
+            val episodes = activeEpisodes
             val chunkSize = if (episodes.size > 500) 100 else 50
             val chunks = remember(episodes, chunkSize) { episodes.chunked(chunkSize) }
             val defaultChunkIdx = remember(chunks, lastWatchedEpisode) {
@@ -241,14 +263,15 @@ internal fun MediaStreamingSection(
                         val dlStatus = dl?.let { runCatching { DownloadStatus.valueOf(it.status) }.getOrNull() }
                         val isBusy = streamingState.busyEpisode == ep
                         val isLastWatched = ep == lastWatchedEpisode
+                        val isWatched = ep in watchedEpisodes || isLastWatched
                         val epName = streamingState.episodeTitles[ep]
 
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = if (isLastWatched) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surfaceContainer
+                            color = when {
+                                isLastWatched -> MaterialTheme.colorScheme.primaryContainer
+                                isWatched -> MaterialTheme.colorScheme.secondaryContainer
+                                else -> MaterialTheme.colorScheme.surfaceContainer
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -264,10 +287,10 @@ internal fun MediaStreamingSection(
                                     text = ep,
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isLastWatched) {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.primary
+                                    color = when {
+                                        isLastWatched -> MaterialTheme.colorScheme.onPrimaryContainer
+                                        isWatched -> MaterialTheme.colorScheme.onSecondaryContainer
+                                        else -> MaterialTheme.colorScheme.primary
                                     },
                                 )
                                 Text(
@@ -277,6 +300,14 @@ internal fun MediaStreamingSection(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
                                 )
+                                if (isWatched) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Watched",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
                                 EpisodeStatusIndicator(isBusy = isBusy, dlStatus = dlStatus, dl = dl)
                             }
                         }
@@ -292,9 +323,11 @@ internal fun MediaStreamingSection(
                         val dlStatus = dl?.let { runCatching { DownloadStatus.valueOf(it.status) }.getOrNull() }
                         val isBusy = streamingState.busyEpisode == ep
                         val isLastWatched = ep == lastWatchedEpisode
+                        val isWatched = ep in watchedEpisodes || isLastWatched
                         val containerColor = when {
                             isLastWatched -> MaterialTheme.colorScheme.primaryContainer
-                            dlStatus == DownloadStatus.COMPLETED -> MaterialTheme.colorScheme.secondaryContainer
+                            isWatched -> MaterialTheme.colorScheme.secondaryContainer
+                            dlStatus == DownloadStatus.COMPLETED -> MaterialTheme.colorScheme.tertiaryContainer
                             else -> MaterialTheme.colorScheme.surfaceContainerHigh
                         }
 
@@ -318,12 +351,24 @@ internal fun MediaStreamingSection(
                                         text = ep,
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = if (isLastWatched) {
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
+                                        color = when {
+                                            isLastWatched -> MaterialTheme.colorScheme.onPrimaryContainer
+                                            isWatched -> MaterialTheme.colorScheme.onSecondaryContainer
+                                            else -> MaterialTheme.colorScheme.onSurface
                                         },
                                     )
+                                    if (isWatched) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Check,
+                                            contentDescription = "Watched",
+                                            tint = if (isLastWatched) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.primary
+                                            },
+                                            modifier = Modifier.size(12.dp),
+                                        )
+                                    }
                                     if (isBusy) {
                                         CircularProgressIndicator(
                                             modifier = Modifier.size(12.dp),
@@ -452,6 +497,20 @@ internal fun MediaStreamingSection(
                             }
                         }
                     }
+                }
+
+                val isEpWatched = ep in watchedEpisodes || ep == lastWatchedEpisode
+                OutlinedButton(
+                    onClick = { onToggleEpisodeWatched(ep) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isEpWatched) "Watched (Tap to Unmark)" else "Mark as Watched")
                 }
             }
         }

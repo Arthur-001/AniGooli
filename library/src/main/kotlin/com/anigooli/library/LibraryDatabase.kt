@@ -141,6 +141,26 @@ interface LibraryDao {
 
     // endregion
 
+    // region Watched Episodes
+
+    /** Streams all watched episode numbers for [anilistId]. */
+    @Query("SELECT episodeNumber FROM watched_episodes WHERE anilistId = :anilistId")
+    fun observeWatchedEpisodes(anilistId: Int): Flow<List<String>>
+
+    /** Fetches all watched episode numbers for [anilistId] once. */
+    @Query("SELECT episodeNumber FROM watched_episodes WHERE anilistId = :anilistId")
+    suspend fun getWatchedEpisodesOnce(anilistId: Int): List<String>
+
+    /** Inserts or updates a watched episode marker. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertWatchedEpisode(entry: WatchedEpisodeEntity)
+
+    /** Removes a single watched episode marker. */
+    @Query("DELETE FROM watched_episodes WHERE anilistId = :anilistId AND episodeNumber = :episodeNumber")
+    suspend fun deleteWatchedEpisode(anilistId: Int, episodeNumber: String)
+
+    // endregion
+
     // region Release Notification Tracker
 
     /** Fetches stored release tracker snapshot for [anilistId]. */
@@ -171,8 +191,9 @@ interface LibraryDao {
         AnimePlaybackPrefsEntity::class,
         WatchHistoryEntity::class,
         ReleaseTrackerEntity::class,
+        WatchedEpisodeEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class LibraryDatabase : RoomDatabase() {

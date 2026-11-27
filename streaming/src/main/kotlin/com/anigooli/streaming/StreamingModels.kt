@@ -159,6 +159,22 @@ data class EpisodeStreamBundle(
     val selectedSource: StreamSource,
 )
 
+/** Available episode lists per audio track resolved from a provider watch page. */
+data class ProviderEpisodes(
+    /** All Japanese / subbed episode numbers in ascending order. */
+    val subEpisodes: List<String>,
+    /** English dubbed episode numbers in ascending order (empty if no dub exists). */
+    val dubEpisodes: List<String>,
+    /** True when the provider explicitly reported English dub availability/count. */
+    val dubChecked: Boolean = true,
+) {
+    /** Returns the episode list matching [audioTrack]. */
+    fun forAudioTrack(audioTrack: AudioTrack): List<String> = when (audioTrack) {
+        AudioTrack.JAPANESE -> subEpisodes
+        AudioTrack.ENGLISH_DUB -> dubEpisodes
+    }
+}
+
 /** Current status of the self-updating extractor engine. */
 data class ExtractorStatus(
     /** Currently active script version. */

@@ -10,8 +10,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -33,6 +35,9 @@ class LibraryRepository @Inject constructor(
     private val _lastRestoreSummary = MutableStateFlow<RestoreSummary?>(null)
     /** Summary of the most recent import/restore operation, shared across Library and Conflict screens. */
     val lastRestoreSummary: StateFlow<RestoreSummary?> = _lastRestoreSummary.asStateFlow()
+
+    /** In-memory cache of watched episode numbers keyed by AniList ID. */
+    private val watchedEpisodesMemory = ConcurrentHashMap<Int, Set<String>>()
 
     /** Dismisses the latest restore summary dialog. */
     fun dismissRestoreSummary() {
@@ -450,7 +455,7 @@ class LibraryRepository @Inject constructor(
         )
     }
 
-    /** Records an anime as streamed in watch history so release notifications and History UI display it. */
+    /** Records an anime as streamed in watch history and marks [episodeWatched] as watched. */
     suspend fun recordWatchHistory(
         anilistId: Int,
         title: String,
@@ -459,6 +464,7 @@ class LibraryRepository @Inject constructor(
         providerId: String? = null,
         malId: Int? = null,
     ) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
         val existing = dao.getWatchHistoryById(anilistId)
         dao.upsertWatchHistory(
             WatchHistoryEntity(
@@ -466,11 +472,45 @@ class LibraryRepository @Inject constructor(
                 title = title,
                 coverUrl = coverUrl ?: existing?.coverUrl,
                 lastEpisodeWatched = episodeWatched,
-                lastWatchedAt = System.currentTimeMillis(),
+                lastWatchedAt = now,
                 providerId = providerId ?: existing?.providerId,
                 malId = malId ?: existing?.malId,
             )
         )
+        watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() + episodeWatched
+        dao.upsertWatchedEpisode(
+            WatchedEpisodeEntity(
+                anilistId = anilistId,
+                episodeNumber = episodeWatched,
+                watchedAt = now,
+            )
+        )
+    }
+
+    /** Streams the set of watched episode numbers for [anilistId], backed by local storage and memory. */
+    fun observeWatchedEpisodes(anilistId: Int): Flow<Set<String>> =
+        dao.observeWatchedEpisodes(anilistId).map { list ->
+            val set = list.toSet()
+            watchedEpisodesMemory[anilistId] = set
+            set
+        }
+
+    /** Marks [episodeNumber] as watched for [anilistId] in both memory and local storage. */
+    suspend fun markEpisodeWatched(anilistId: Int, episodeNumber: String) = withContext(Dispatchers.IO) {
+        watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() + episodeNumber
+        dao.upsertWatchedEpisode(
+            WatchedEpisodeEntity(
+                anilistId = anilistId,
+                episodeNumber = episodeNumber,
+                watchedAt = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    /** Unmarks [episodeNumber] as watched for [anilistId] in both memory and local storage. */
+    suspend fun unmarkEpisodeWatched(anilistId: Int, episodeNumber: String) = withContext(Dispatchers.IO) {
+        watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() - episodeNumber
+        dao.deleteWatchedEpisode(anilistId, episodeNumber)
     }
 
     /** Streams all watch history entries ordered most recently watched first. */

@@ -278,23 +278,43 @@ class StreamingRepository @Inject constructor(
 
     /** Fetches available episode number strings (e.g. ["1", "2", ...]) for [providerId]. */
     suspend fun fetchEpisodes(providerId: String): Result<List<String>> =
+        fetchEpisodesByTrack(providerId).map { it.subEpisodes }
+
+    /**
+     * Fetches both Japanese (`subEpisodes`) and English Dub (`dubEpisodes`) episode lists
+     * in a single provider request so switching tracks does not re-fetch from the network.
+     */
+    suspend fun fetchEpisodesByTrack(providerId: String): Result<ProviderEpisodes> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val episodes = when {
-                    HianimeParser.isHianimeProviderId(providerId) ->
-                        fetchHianimeEpisodes(providerId).map { it.episodeNumber }
-                    HentaiStreamParser.isHentaiStreamProviderId(providerId) -> listOf("1")
-                    HentaimamaParser.isHentaimamaProviderId(providerId) ->
-                        fetchHentaimamaEpisodes(providerId).map { it.episodeNumber }
-                    Hanime1Parser.isHanime1ProviderId(providerId) -> listOf("1")
+                val result = when {
+                    HianimeParser.isHianimeProviderId(providerId) -> {
+                        val eps = fetchHianimeEpisodes(providerId).map { it.episodeNumber }
+                        ProviderEpisodes(subEpisodes = eps, dubEpisodes = eps, dubChecked = false)
+                    }
+                    HentaiStreamParser.isHentaiStreamProviderId(providerId) ->
+                        ProviderEpisodes(subEpisodes = listOf("1"), dubEpisodes = emptyList(), dubChecked = true)
+                    HentaimamaParser.isHentaimamaProviderId(providerId) -> {
+                        val eps = fetchHentaimamaEpisodes(providerId).map { it.episodeNumber }
+                        ProviderEpisodes(subEpisodes = eps, dubEpisodes = emptyList(), dubChecked = true)
+                    }
+                    Hanime1Parser.isHanime1ProviderId(providerId) ->
+                        ProviderEpisodes(subEpisodes = listOf("1"), dubEpisodes = emptyList(), dubChecked = true)
                     else -> {
                         val req = runtime.buildEpisodesRequest(providerId)
                         val resp = httpClient.get(req.url, req.headers)
-                        runtime.parseEpisodesResponse(resp.body)
+                        val subEps = runtime.parseEpisodesResponse(resp.body)
+                        val dubCount = NativeMiruroParser.parseDubEpisodeCount(resp.body)
+                        val dubEps = NativeMiruroParser.resolveDubEpisodes(subEps, dubCount)
+                        ProviderEpisodes(
+                            subEpisodes = subEps,
+                            dubEpisodes = dubEps,
+                            dubChecked = dubCount != null,
+                        )
                     }
                 }
-                if (episodes.isEmpty()) throw IOException("No episodes found")
-                episodes
+                if (result.subEpisodes.isEmpty()) throw IOException("No episodes found")
+                result
             }
         }
 

@@ -29,6 +29,24 @@ object LibraryDiModule {
         }
     }
 
+    private val migration2To3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `watched_episodes` (
+                    `anilistId` INTEGER NOT NULL,
+                    `episodeNumber` TEXT NOT NULL,
+                    `watchedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`anilistId`, `episodeNumber`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_watched_episodes_anilistId` ON `watched_episodes` (`anilistId`)"
+            )
+        }
+    }
+
     /** Builds or opens [LibraryDatabase] and seeds default genres on initial creation. */
     @Provides
     @Singleton
@@ -40,7 +58,7 @@ object LibraryDiModule {
             context,
             LibraryDatabase::class.java,
             "anigooli_library.db",
-        ).addMigrations(migration1To2).addCallback(
+        ).addMigrations(migration1To2, migration2To3).addCallback(
             object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     super.onCreate(db)

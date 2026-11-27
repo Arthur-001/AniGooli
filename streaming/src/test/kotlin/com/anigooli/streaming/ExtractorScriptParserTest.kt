@@ -84,4 +84,23 @@ class ExtractorScriptParserTest {
         assertEquals(1080, parsedM3u8.variants[0].height)
         assertEquals("https://hls.example/1080/index.m3u8", parsedM3u8.variants[0].url)
     }
+
+    @Test
+    fun `native miruro parser extracts dub episode count and filters dub episodes`() {
+        val partialDubHtml = """episodeCounts:{raw:12,sub:12,dub:8}"""
+        assertEquals(8, NativeMiruroParser.parseDubEpisodeCount(partialDubHtml))
+        val allEps = (1..12).map { it.toString() }
+        assertEquals((1..8).map { it.toString() }, NativeMiruroParser.resolveDubEpisodes(allEps, 8))
+
+        val noDubHtml = """episodeCounts:{raw:15,sub:15,dub:null}"""
+        assertEquals(0, NativeMiruroParser.parseDubEpisodeCount(noDubHtml))
+        assertEquals(emptyList<String>(), NativeMiruroParser.resolveDubEpisodes(allEps, 0))
+
+        val ariaDubHtml = """<span data-track="dub" aria-label="1161 dubbed episodes"></span>"""
+        assertEquals(1161, NativeMiruroParser.parseDubEpisodeCount(ariaDubHtml))
+
+        val unknownHtml = """<div>no counts</div>"""
+        assertNull(NativeMiruroParser.parseDubEpisodeCount(unknownHtml))
+        assertEquals(allEps, NativeMiruroParser.resolveDubEpisodes(allEps, null))
+    }
 }

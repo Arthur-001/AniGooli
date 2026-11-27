@@ -225,3 +225,18 @@ data class ReleaseTrackerEntity(
     /** Epoch millis when this entry was last checked. */
     val lastCheckedAt: Long,
 )
+
+/** Per-episode watched record persisted locally so watched episodes remain marked across sessions. */
+@Entity(
+    tableName = "watched_episodes",
+    primaryKeys = ["anilistId", "episodeNumber"],
+    indices = [Index(value = ["anilistId"])],
+)
+data class WatchedEpisodeEntity(
+    /** AniList ID of the anime (negative synthetic ID for provider-only entries). */
+    val anilistId: Int,
+    /** Episode identifier string (e.g. "1", "12.5"). */
+    val episodeNumber: String,
+    /** Epoch millis when this episode was marked watched. */
+    val watchedAt: Long,
+)
