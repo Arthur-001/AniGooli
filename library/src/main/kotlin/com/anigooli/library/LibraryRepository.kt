@@ -487,10 +487,16 @@ class LibraryRepository @Inject constructor(
             set
         }
 
+    /** Returns the saved playback resume position in ms for a specific [episodeNumber], or 0 if none. */
+    suspend fun getEpisodeResumePositionMs(anilistId: Int, episodeNumber: String): Long =
+        withContext(Dispatchers.IO) {
+            dao.getWatchedEpisodeRecord(anilistId, episodeNumber)?.lastPositionMs ?: 0L
+        }
+
     /**
      * Accumulates [activeDeltaMs] of real active playback time for [episodeNumber] and marks it watched
-     * only once accumulated active watch time reaches at least 65% of [durationMs].
-     * When the 65% threshold is reached and the global setting is enabled, also adds the anime to My List.
+     * only once accumulated active watch time reaches at least 65% of [durationMs], while always
+     * persisting per-episode [lastPositionMs] resume position when supplied.
      */
     suspend fun recordActiveWatchProgress(
         anilistId: Int,
@@ -499,13 +505,15 @@ class LibraryRepository @Inject constructor(
         durationMs: Long,
         animeTitle: String? = null,
         coverUrl: String? = null,
+        lastPositionMs: Long? = null,
     ) = withContext(Dispatchers.IO) {
-        if (activeDeltaMs <= 0L && durationMs <= 0L) return@withContext
+        if (activeDeltaMs <= 0L && durationMs <= 0L && (lastPositionMs ?: 0L) <= 0L) return@withContext
         val existing = dao.getWatchedEpisodeRecord(anilistId, episodeNumber)
         val newActiveWatchMs = (existing?.activeWatchMs ?: 0L) + activeDeltaMs.coerceAtLeast(0L)
         val effectiveDurationMs = if (durationMs > 0L) durationMs else (existing?.durationMs ?: 0L)
         val reachedThreshold = hasReachedWatchedThreshold(newActiveWatchMs, effectiveDurationMs)
         val newIsWatched = (existing?.isWatched == true) || reachedThreshold
+        val resolvedPositionMs = lastPositionMs?.coerceAtLeast(0L) ?: existing?.lastPositionMs ?: 0L
         dao.upsertWatchedEpisode(
             WatchedEpisodeEntity(
                 anilistId = anilistId,
@@ -513,6 +521,7 @@ class LibraryRepository @Inject constructor(
                 activeWatchMs = newActiveWatchMs,
                 durationMs = effectiveDurationMs,
                 isWatched = newIsWatched,
+                lastPositionMs = resolvedPositionMs,
                 watchedAt = System.currentTimeMillis(),
             )
         )
@@ -547,6 +556,7 @@ class LibraryRepository @Inject constructor(
                 activeWatchMs = existing?.activeWatchMs ?: 0L,
                 durationMs = existing?.durationMs ?: 0L,
                 isWatched = true,
+                lastPositionMs = existing?.lastPositionMs ?: 0L,
                 watchedAt = System.currentTimeMillis(),
             )
         )
@@ -555,7 +565,18 @@ class LibraryRepository @Inject constructor(
     /** Unmarks [episodeNumber] as watched for [anilistId] and resets its accumulated watch progress. */
     suspend fun unmarkEpisodeWatched(anilistId: Int, episodeNumber: String) = withContext(Dispatchers.IO) {
         watchedEpisodesMemory[anilistId] = watchedEpisodesMemory[anilistId].orEmpty() - episodeNumber
-        dao.deleteWatchedEpisode(anilistId, episodeNumber)
+        val existing = dao.getWatchedEpisodeRecord(anilistId, episodeNumber)
+        if (existing != null && existing.lastPositionMs > 0L) {
+            dao.upsertWatchedEpisode(
+                existing.copy(
+                    activeWatchMs = 0L,
+                    isWatched = false,
+                    watchedAt = System.currentTimeMillis(),
+                )
+            )
+        } else {
+            dao.deleteWatchedEpisode(anilistId, episodeNumber)
+        }
     }
 
     companion object {

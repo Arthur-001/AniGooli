@@ -202,10 +202,13 @@ class PlayerViewModel @Inject constructor(
             ?: payload.streamBundle?.actualAudioTrack
             ?: AudioTrack.JAPANESE
         val resolvedSubs = prefs?.subtitlesEnabled ?: true
-        val resumePos = if (prefs != null && prefs.lastEpisode == payload.episode) {
-            prefs.lastPositionMs
-        } else {
-            0L
+        val epResumePos = payload.anilistId?.let {
+            libraryRepository.getEpisodeResumePositionMs(it, payload.episode)
+        } ?: 0L
+        val resumePos = when {
+            epResumePos > 0L -> epResumePos
+            prefs != null && prefs.lastEpisode == payload.episode -> prefs.lastPositionMs
+            else -> 0L
         }
 
         val bundle = payload.streamBundle
@@ -331,12 +334,13 @@ class PlayerViewModel @Inject constructor(
         val providerId = current.providerId ?: return
         val anilistId = current.anilistId ?: return
         viewModelScope.launch {
+            val epResumeMs = libraryRepository.getEpisodeResumePositionMs(anilistId, targetEpisode)
             loadOnlineEpisode(
                 providerId = providerId,
                 anilistId = anilistId,
                 episode = targetEpisode,
                 audioTrack = current.audioTrack,
-                preservePositionMs = 0L,
+                preservePositionMs = epResumeMs,
             )
             libraryRepository.recordWatchHistory(
                 anilistId = anilistId,
@@ -377,14 +381,15 @@ class PlayerViewModel @Inject constructor(
                 lastEpisode = current.episode,
                 lastPositionMs = positionMs,
             )
-            if (activeWatchDeltaMs > 0L) {
+            if (activeWatchDeltaMs > 0L || positionMs > 0L || durationMs > 0L) {
                 libraryRepository.recordActiveWatchProgress(
                     anilistId = anilistId,
                     episodeNumber = current.episode,
-                    activeDeltaMs = activeWatchDeltaMs,
+                    activeDeltaMs = activeWatchDeltaMs.coerceAtLeast(0L),
                     durationMs = durationMs,
                     animeTitle = current.animeTitle,
                     coverUrl = current.coverUrl,
+                    lastPositionMs = positionMs,
                 )
             }
         }

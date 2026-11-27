@@ -50,6 +50,14 @@ object LibraryDiModule {
         }
     }
 
+    private val migration3To4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE watched_episodes ADD COLUMN lastPositionMs INTEGER NOT NULL DEFAULT 0"
+            )
+        }
+    }
+
     /** Builds or opens [LibraryDatabase] and seeds default genres on initial creation. */
     @Provides
     @Singleton
@@ -61,7 +69,7 @@ object LibraryDiModule {
             context,
             LibraryDatabase::class.java,
             "anigooli_library.db",
-        ).addMigrations(migration1To2, migration2To3).addCallback(
+        ).addMigrations(migration1To2, migration2To3, migration3To4).addCallback(
             object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     super.onCreate(db)

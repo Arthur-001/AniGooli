@@ -226,10 +226,15 @@ internal fun AniGooliSettingsSections(
                 }
 
                 Text(
-                    text = "Single-Video Pre-Buffer Cap (Cache: ${
+                    text = "In-Memory (RAM) Pre-Buffer Cap (In RAM: ${
                         String.format(Locale.getDefault(), "%.1f MB", preBufferCacheBytes / BYTES_PER_MB)
                     })",
                     style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = "Stored in RAM only — cleared automatically when app closes",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -244,7 +249,7 @@ internal fun AniGooliSettingsSections(
                     }
                 }
                 OutlinedButton(onClick = viewModel::clearPreBufferCache) {
-                    Text("Clear Pre-Buffer Cache")
+                    Text("Clear RAM Pre-Buffer")
                 }
 
                 Row(

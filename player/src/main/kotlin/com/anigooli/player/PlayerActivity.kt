@@ -297,18 +297,32 @@ private fun PlayerScreen(
     var playerErrorText by remember { mutableStateOf<String?>(null) }
     var offlineCachedOnly by remember { mutableStateOf(false) }
     var knownDurationMs by remember { mutableLongStateOf(0L) }
+    var pendingOfflineSeekMs by remember { mutableStateOf<Long?>(null) }
     val latestState by rememberUpdatedState(state)
+
+    LaunchedEffect(state.preBufferState.totalDurationMs) {
+        val d = state.preBufferState.totalDurationMs
+        if (d > knownDurationMs) knownDurationMs = d
+    }
 
     fun maxOfflineSeekMs(): Long {
         val total = maxOf(durationMs, knownDurationMs)
         val frac = latestState.preBufferState.progressFraction
-        if (!offlineCachedOnly || total <= 0L || frac >= 0.999f) return total.coerceAtLeast(0L)
-        return ((total * frac).toLong() - 1_000L).coerceAtLeast(0L)
+        if (!offlineCachedOnly || frac >= 0.999f) return total.coerceAtLeast(0L)
+        val playerDur = exoPlayer.duration.takeIf { it > 0L }
+        val limitByFrac = if (total > 0L && frac > 0f) (total * frac).toLong() else Long.MAX_VALUE
+        val bounded = when {
+            playerDur != null && total > playerDur -> minOf(playerDur, limitByFrac)
+            playerDur != null -> playerDur
+            limitByFrac < Long.MAX_VALUE -> limitByFrac
+            else -> 0L
+        }
+        return (bounded - 1_000L).coerceAtLeast(0L)
     }
 
     fun seekSafely(targetMs: Long) {
         val total = maxOf(durationMs, knownDurationMs).coerceAtLeast(0L)
-        val clamped = if (offlineCachedOnly && total > 0L && latestState.preBufferState.progressFraction < 0.999f) {
+        val clamped = if (offlineCachedOnly && latestState.preBufferState.progressFraction < 0.999f) {
             val limit = maxOfflineSeekMs()
             if (targetMs > limit) {
                 tapIndicatorText = "Only ${(latestState.preBufferState.progressFraction * 100).toInt()}% pre-buffered offline"
@@ -326,6 +340,9 @@ private fun PlayerScreen(
             exoPlayer.playWhenReady = true
         } else {
             exoPlayer.seekTo(clamped)
+            if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                exoPlayer.playWhenReady = true
+            }
         }
         currentPosMs = clamped
     }
@@ -344,6 +361,18 @@ private fun PlayerScreen(
                     val d = exoPlayer.duration.coerceAtLeast(0L)
                     durationMs = d
                     if (d > knownDurationMs) knownDurationMs = d
+                    if (offlineCachedOnly && d > 0L && exoPlayer.currentPosition >= d) {
+                        val safePos = (d - 2_000L).coerceAtLeast(0L)
+                        exoPlayer.seekTo(safePos)
+                        currentPosMs = safePos
+                    }
+                } else if (
+                    playbackState == Player.STATE_ENDED &&
+                    offlineCachedOnly &&
+                    latestState.preBufferState.progressFraction < 0.999f
+                ) {
+                    tapIndicatorText =
+                        "Reached ${(latestState.preBufferState.progressFraction * 100).toInt()}% pre-buffered limit (offline)"
                 }
             }
 
@@ -354,16 +383,19 @@ private fun PlayerScreen(
                     error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
                     error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
                     error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND
-                val hasCachedData = !latestState.isLocalFile && latestState.preBufferState.bufferedBytes > 0L
+                val hasCachedData = !latestState.isLocalFile && (
+                    latestState.preBufferState.bufferedBytes > 0L ||
+                        viewModel.preBufferManager.hasCachedDataForSlot(latestState.activeSlotKey)
+                    )
                 if (isNetworkErr && hasCachedData) {
                     if (!offlineCachedOnly) {
+                        val activePos = exoPlayer.currentPosition.coerceAtLeast(currentPosMs)
+                        val resumeSourcePos = if (activePos > 0L) activePos else latestState.targetSeekPositionMs
+                        val limit = maxOfflineSeekMs()
+                        pendingOfflineSeekMs = if (limit > 0L) resumeSourcePos.coerceAtMost(limit) else resumeSourcePos
                         offlineCachedOnly = true
                         playerErrorText = null
                         tapIndicatorText = "Offline • Playing pre-buffered section"
-                        val resumeAt = currentPosMs.coerceAtMost(maxOfflineSeekMs())
-                        exoPlayer.prepare()
-                        exoPlayer.seekTo(resumeAt)
-                        exoPlayer.playWhenReady = true
                     } else {
                         playerErrorText = null
                         tapIndicatorText = "Pre-buffered section ended"
@@ -377,7 +409,7 @@ private fun PlayerScreen(
         onDispose {
             viewModel.savePlaybackProgress(
                 positionMs = exoPlayer.currentPosition,
-                durationMs = exoPlayer.duration.coerceAtLeast(0L),
+                durationMs = maxOf(exoPlayer.duration.coerceAtLeast(0L), knownDurationMs),
                 activeWatchDeltaMs = pendingActiveWatchMs,
             )
             pendingActiveWatchMs = 0L
@@ -386,11 +418,16 @@ private fun PlayerScreen(
         }
     }
 
-    // Prepare media source whenever stream source or local file changes
+    // Reset offline-mode and duration tracking only when changing stream/file
     LaunchedEffect(state.selectedSource, state.localVideoPath, state.isLocalFile) {
-        playerErrorText = null
         offlineCachedOnly = false
-        knownDurationMs = 0L
+        knownDurationMs = state.preBufferState.totalDurationMs.coerceAtLeast(0L)
+        pendingOfflineSeekMs = null
+    }
+
+    // Prepare media source whenever stream source, file, or offline cached-only fallback changes
+    LaunchedEffect(state.selectedSource, state.localVideoPath, state.isLocalFile, offlineCachedOnly) {
+        playerErrorText = null
         if (state.isLocalFile) {
             val path = state.localVideoPath ?: return@LaunchedEffect
             val dataFactory = DefaultDataSource.Factory(context)
@@ -428,7 +465,9 @@ private fun PlayerScreen(
             }
             exoPlayer.setMediaSource(finalSource)
             exoPlayer.prepare()
-            if (state.targetSeekPositionMs > 0L) exoPlayer.seekTo(state.targetSeekPositionMs)
+            val seekTarget = pendingOfflineSeekMs ?: state.targetSeekPositionMs
+            pendingOfflineSeekMs = null
+            if (seekTarget > 0L) exoPlayer.seekTo(seekTarget)
             exoPlayer.playWhenReady = true
         }
     }
@@ -469,7 +508,7 @@ private fun PlayerScreen(
             if (tick % SAVE_PROGRESS_EVERY_TICKS == 0 && exoPlayer.isPlaying) {
                 viewModel.savePlaybackProgress(
                     positionMs = currentPosMs,
-                    durationMs = durationMs,
+                    durationMs = maxOf(durationMs, knownDurationMs),
                     activeWatchDeltaMs = pendingActiveWatchMs,
                 )
                 pendingActiveWatchMs = 0L
@@ -562,7 +601,7 @@ private fun PlayerScreen(
                     .then(
                         if (!isLocked) {
                             Modifier
-                                .pointerInput(durationMs) {
+                                .pointerInput(durationMs, knownDurationMs) {
                                     var dragType: GestureHudType? = null
                                     var dragStartX = 0f
                                     var startPosMs = 0L
@@ -598,7 +637,8 @@ private fun PlayerScreen(
                                                     accumulatedX += dragAmount.x
                                                     val delta = ((accumulatedX / width) * SEEK_DRAG_WINDOW_MS).toLong()
                                                     seekDeltaMs = delta
-                                                    seekPreviewMs = (startPosMs + delta).coerceIn(0L, durationMs.coerceAtLeast(1L))
+                                                    seekPreviewMs = (startPosMs + delta)
+                                                        .coerceIn(0L, maxOf(durationMs, knownDurationMs).coerceAtLeast(1L))
                                                 }
                                                 GestureHudType.BRIGHTNESS -> {
                                                     accumulatedBright = (accumulatedBright - dragAmount.y / height).coerceIn(0.01f, 1f)
@@ -798,6 +838,10 @@ private fun PlayerScreen(
                     onPlayPause = {
                         if (exoPlayer.playbackState == Player.STATE_IDLE) {
                             seekSafely(currentPosMs)
+                        } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                            val restartAt = if (offlineCachedOnly && currentPosMs >= maxOfflineSeekMs()) 0L else currentPosMs
+                            seekSafely(restartAt)
+                            exoPlayer.play()
                         } else if (exoPlayer.isPlaying) {
                             exoPlayer.pause()
                         } else {
@@ -815,7 +859,7 @@ private fun PlayerScreen(
                         if (idx > 0) {
                             viewModel.savePlaybackProgress(
                                 positionMs = exoPlayer.currentPosition,
-                                durationMs = durationMs,
+                                durationMs = maxOf(durationMs, knownDurationMs),
                                 activeWatchDeltaMs = pendingActiveWatchMs,
                             )
                             pendingActiveWatchMs = 0L
@@ -827,7 +871,7 @@ private fun PlayerScreen(
                         if (idx in 0 until state.allEpisodes.lastIndex) {
                             viewModel.savePlaybackProgress(
                                 positionMs = exoPlayer.currentPosition,
-                                durationMs = durationMs,
+                                durationMs = maxOf(durationMs, knownDurationMs),
                                 activeWatchDeltaMs = pendingActiveWatchMs,
                             )
                             pendingActiveWatchMs = 0L

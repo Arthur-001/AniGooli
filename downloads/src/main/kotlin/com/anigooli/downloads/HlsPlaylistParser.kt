@@ -1,6 +1,6 @@
 package com.anigooli.downloads
 
-/** Parsed HLS media playlist containing optional initialization segment and ordered media segments. */
+/** Parsed HLS media playlist containing optional initialization segment, keys, and ordered media segments. */
 data class HlsMediaPlaylist(
     /** Optional `#EXT-X-MAP` initialization segment URL (for fragmented MP4 streams). */
     val initSegmentUrl: String?,
@@ -8,6 +8,10 @@ data class HlsMediaPlaylist(
     val segmentUrls: List<String>,
     /** Whether the playlist is a master playlist pointing to sub-playlists instead of segments. */
     val isMasterPlaylist: Boolean = false,
+    /** Distinct `#EXT-X-KEY` encryption key URIs referenced by this playlist. */
+    val keyUrls: List<String> = emptyList(),
+    /** Sum of `#EXTINF` segment durations in milliseconds, or 0 if not declared. */
+    val totalDurationMs: Long = 0L,
 )
 
 /** Parses HLS `.m3u8` media playlists into absolute segment URLs. */
@@ -34,6 +38,8 @@ object HlsPlaylistParser {
 
         var initUrl: String? = null
         val segments = ArrayList<String>()
+        val keys = LinkedHashSet<String>()
+        var totalDurationMs = 0L
         for (rawLine in lines) {
             val line = rawLine.trim()
             if (line.isEmpty()) continue
@@ -42,11 +48,28 @@ object HlsPlaylistParser {
                 if (!rawUri.isNullOrBlank()) {
                     initUrl = resolveUrl(rawUri, baseUrl)
                 }
+            } else if (line.startsWith("#EXT-X-KEY:")) {
+                val rawUri = mapUriRegex.find(line)?.groupValues?.getOrNull(1)
+                if (!rawUri.isNullOrBlank()) {
+                    val resolvedKey = resolveUrl(rawUri, baseUrl)
+                    if (resolvedKey.isNotEmpty()) keys.add(resolvedKey)
+                }
+            } else if (line.startsWith("#EXTINF:")) {
+                val sec = line.removePrefix("#EXTINF:").substringBefore(',').trim().toDoubleOrNull()
+                if (sec != null && sec > 0.0) {
+                    totalDurationMs += (sec * 1000.0).toLong()
+                }
             } else if (!line.startsWith("#")) {
                 segments.add(resolveUrl(line, baseUrl))
             }
         }
-        return HlsMediaPlaylist(initSegmentUrl = initUrl, segmentUrls = segments, isMasterPlaylist = false)
+        return HlsMediaPlaylist(
+            initSegmentUrl = initUrl,
+            segmentUrls = segments,
+            isMasterPlaylist = false,
+            keyUrls = keys.toList(),
+            totalDurationMs = totalDurationMs,
+        )
     }
 
     private fun extractFirstMasterVariantUrl(lines: List<String>, baseUrl: String): String? {
@@ -114,12 +137,13 @@ object HlsPlaylistParser {
                 if (line.isNotEmpty()) out.add(lines[i])
                 i++
             }
-            if (!keptAny) return playlistText
+            if (!keptAny) return ""
             return out.joinToString("\n")
         }
 
         val out = ArrayList<String>()
         val pendingSegmentMeta = ArrayList<String>()
+        var keptSegments = 0
         var stopped = false
         for (rawLine in lines) {
             val line = rawLine.trim()
@@ -133,6 +157,14 @@ object HlsPlaylistParser {
                 } else {
                     out.add(line)
                 }
+            } else if (line.startsWith("#EXT-X-KEY:")) {
+                val rawUri = mapUriRegex.find(line)?.groupValues?.getOrNull(1)
+                val resolvedLine = if (!rawUri.isNullOrBlank()) {
+                    line.replace(rawUri, resolveUrl(rawUri, baseUrl))
+                } else {
+                    line
+                }
+                pendingSegmentMeta.add(resolvedLine)
             } else if (line.startsWith("#EXTINF:") || line.startsWith("#EXT-X-BYTERANGE:") || line.startsWith("#EXT-X-DISCONTINUITY")) {
                 pendingSegmentMeta.add(line)
             } else if (line.startsWith("#")) {
@@ -146,8 +178,10 @@ object HlsPlaylistParser {
                 out.addAll(pendingSegmentMeta)
                 pendingSegmentMeta.clear()
                 out.add(resolved)
+                keptSegments++
             }
         }
+        if (keptSegments == 0) return ""
         if (stopped || !lines.any { it.trim() == "#EXT-X-ENDLIST" }) {
             out.add("#EXT-X-ENDLIST")
         }

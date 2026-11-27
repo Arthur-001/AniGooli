@@ -243,6 +243,8 @@ data class WatchedEpisodeEntity(
     val durationMs: Long = 0L,
     /** True once [activeWatchMs] reaches 65% of [durationMs] or the user manually marks it watched. */
     val isWatched: Boolean = false,
+    /** Per-episode playback resume position in milliseconds. */
+    val lastPositionMs: Long = 0L,
     /** Epoch millis when this episode record was last updated. */
     val watchedAt: Long,
 )
