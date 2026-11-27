@@ -40,8 +40,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
@@ -76,6 +78,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -939,8 +942,10 @@ private fun PlayerControlsOverlay(
                 Spacer(Modifier.width(6.dp))
             }
             ControlPillButton(label = "MPV", onClick = onOpenMpv)
-            Spacer(Modifier.width(6.dp))
-            ControlPillButton(label = "PiP", onClick = onPip)
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick = onPip) {
+                MinimizePopoutIcon(tint = Color.White)
+            }
             IconButton(onClick = onLock) {
                 Icon(Icons.Rounded.Lock, contentDescription = "Lock screen", tint = Color.White)
             }
@@ -1156,6 +1161,32 @@ private fun VideoSeekBar(
 }
 
 @Composable
+private fun MinimizePopoutIcon(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.size(22.dp)) {
+        val strokePx = 2.dp.toPx()
+        val corner = CornerRadius(2.5.dp.toPx(), 2.5.dp.toPx())
+        // Outer window frame
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(strokePx / 2f, strokePx / 2f),
+            size = Size(size.width - strokePx, size.height - strokePx),
+            cornerRadius = corner,
+            style = Stroke(width = strokePx),
+        )
+        // Minimized floating pop-up rectangle in bottom-right
+        val miniW = size.width * 0.44f
+        val miniH = size.height * 0.36f
+        val pad = strokePx * 1.4f
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(size.width - miniW - pad, size.height - miniH - pad),
+            size = Size(miniW, miniH),
+            cornerRadius = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx()),
+        )
+    }
+}
+
+@Composable
 private fun ControlPillButton(label: String, onClick: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(18.dp),
@@ -1220,7 +1251,10 @@ private fun AudioSubPickerSheet(
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp),
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
         ) {
             Text("Audio & Subtitles (Saved for this Anime)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             if (!isLocalFile) {
@@ -1272,21 +1306,22 @@ private fun SpeedPickerSheet(
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
             Text("Playback Speed", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            SPEED_OPTIONS.forEach { spd ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onSelectSpeed(spd) }
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                ) {
-                    Text("${spd}x")
-                    if (spd == currentSpeed) Icon(Icons.Rounded.Check, contentDescription = null)
+            LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                items(SPEED_OPTIONS) { spd ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onSelectSpeed(spd) }
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                    ) {
+                        Text("${spd}x")
+                        if (spd == currentSpeed) Icon(Icons.Rounded.Check, contentDescription = null)
+                    }
                 }
             }
-            Spacer(Modifier.height(16.dp))
         }
     }
 }
