@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -481,7 +482,7 @@ class PreBufferManager @Inject constructor(
             val dest = store.segmentFile(slotKey, segUrl)
             if (dest.exists() && dest.length() > 0L && segUrl in completed) continue
 
-            val written = downloadUrlToFile(segUrl, dest, source.referer, source.origin)
+            val written = downloadSegmentWithRetry(segUrl, dest, source.referer, source.origin)
             if (written > 0L) {
                 completed.add(segUrl)
                 currentBytes += written
@@ -544,7 +545,7 @@ class PreBufferManager @Inject constructor(
             if (source.referer.isNotBlank()) reqBuilder.header("Referer", source.referer)
             if (source.origin.isNotBlank()) reqBuilder.header("Origin", source.origin)
 
-            val resp = okHttpClient.newCall(reqBuilder.build()).execute()
+            val resp = executeWithRetry(reqBuilder.build()) ?: break
             val respCode = resp.code
             val body = resp.body
             if ((respCode != HTTP_PARTIAL && respCode != HTTP_OK) || body == null) {
@@ -561,12 +562,25 @@ class PreBufferManager @Inject constructor(
                 partFile.delete()
             }
 
-            val bytesWritten = appendResponseChunk(body.byteStream(), partFile, offset == 0L)
+            val bytesWritten = appendResponseChunk(body.byteStream(), partFile, offset == 0L) { chunkDelta ->
+                val liveOffset = offset + chunkDelta
+                val liveDenom = if (totalLength > 0L) totalLength else capBytes
+                if (liveDenom > 0L) {
+                    _state.value = PreBufferState(
+                        activeSlotKey = slotKey,
+                        bufferedBytes = liveOffset,
+                        capBytes = capBytes,
+                        estimatedTotalBytes = totalLength,
+                        progressFraction = (liveOffset.toFloat() / liveDenom.toFloat()).coerceIn(0f, 1f),
+                        isComplete = false,
+                    )
+                }
+            }
             resp.close()
             if (bytesWritten <= 0L) break
 
             offset += bytesWritten
-            val isDone = totalLength > 0L && offset >= totalLength
+            val isDone = (totalLength > 0L && offset >= totalLength) || respCode == HTTP_OK
             store.writeMeta(
                 slotKey,
                 PreBufferSlotMeta(
@@ -602,8 +616,11 @@ class PreBufferManager @Inject constructor(
         input: java.io.InputStream,
         target: File,
         truncate: Boolean,
+        onProgress: ((Long) -> Unit)? = null,
     ): Long {
         var total = 0L
+        var lastReported = 0L
+        val reportStep = 512L * 1024L
         val buf = ByteArray(IO_BUFFER_SIZE)
         FileOutputStream(target, !truncate).use { out ->
             while (true) {
@@ -611,9 +628,40 @@ class PreBufferManager @Inject constructor(
                 if (read <= 0) break
                 out.write(buf, 0, read)
                 total += read
+                if (onProgress != null && total - lastReported >= reportStep) {
+                    lastReported = total
+                    onProgress(total)
+                }
             }
         }
         return total
+    }
+
+    private suspend fun executeWithRetry(request: Request, maxAttempts: Int = 3): okhttp3.Response? {
+        repeat(maxAttempts) { attempt ->
+            val resp = runCatching { okHttpClient.newCall(request).execute() }.getOrNull()
+            if (resp != null && (resp.isSuccessful || resp.code == HTTP_PARTIAL)) {
+                return resp
+            }
+            resp?.close()
+            if (attempt < maxAttempts - 1) delay(1_500L)
+        }
+        return null
+    }
+
+    private suspend fun downloadSegmentWithRetry(
+        url: String,
+        dest: File,
+        referer: String,
+        origin: String,
+        maxAttempts: Int = 3,
+    ): Long {
+        repeat(maxAttempts) { attempt ->
+            val written = runCatching { downloadUrlToFile(url, dest, referer, origin) }.getOrDefault(0L)
+            if (written > 0L) return written
+            if (attempt < maxAttempts - 1) delay(1_500L)
+        }
+        return 0L
     }
 
     private fun fetchString(url: String, referer: String, origin: String): String? {

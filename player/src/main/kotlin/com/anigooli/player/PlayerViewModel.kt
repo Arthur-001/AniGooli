@@ -572,6 +572,15 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** Ensures pre-buffering is active for the current online episode (e.g., after returning from background). */
+    fun ensurePreBufferRunning() {
+        val current = _uiState.value
+        if (current.isLocalFile) return
+        val anilistId = current.anilistId ?: return
+        val source = current.selectedSource ?: return
+        startPreBufferFor(anilistId, current.episode, source, current.audioTrack)
+    }
+
     private fun startPreBufferFor(
         anilistId: Int,
         episode: String,
